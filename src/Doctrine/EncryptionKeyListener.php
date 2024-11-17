@@ -3,11 +3,11 @@
 namespace Gebler\EncryptedFieldsBundle\Doctrine;
 
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
-use Gebler\EncryptedFieldsBundle\Service\EncryptionManager;
+use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
 
 class EncryptionKeyListener
 {
-    public function __construct(private EncryptionManager $encryptionManager)
+    public function __construct(private EncryptionManagerInterface $encryptionManager)
     {
     }
 

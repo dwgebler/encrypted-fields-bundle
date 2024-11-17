@@ -6,7 +6,7 @@ use Gebler\EncryptedFieldsBundle\Exception\EncryptedFieldException;
 use InvalidArgumentException;
 use Random\RandomException;
 
-readonly class EncryptionManager
+readonly class EncryptionManager implements EncryptionManagerInterface
 {
     public function __construct(private string $masterKey, private string $cipher = 'aes-256-gcm')
     {
@@ -47,7 +47,13 @@ readonly class EncryptionManager
      */
     public function encrypt(string $data, string $encryptionKey): string
     {
-        $encryptionKey = \hex2bin($encryptionKey);
+        if (\strlen($data) === 0) {
+            throw new InvalidArgumentException('The data is empty.');
+        }
+        $encryptionKey = @\hex2bin($encryptionKey);
+        if ($encryptionKey === false) {
+            throw new InvalidArgumentException('The encryption key is not valid.');
+        }
         $keyLength = \strlen($encryptionKey);
         $cipherKeyLength = \openssl_cipher_key_length($this->cipher);
         if ($keyLength !== $cipherKeyLength) {
@@ -77,7 +83,13 @@ readonly class EncryptionManager
      */
     public function decrypt(string $data, string $encryptionKey): string
     {
-        $encryptionKey = \hex2bin($encryptionKey);
+        if (\strlen($data) === 0) {
+            throw new InvalidArgumentException('The data is empty.');
+        }
+        $encryptionKey = @\hex2bin($encryptionKey);
+        if ($encryptionKey === false) {
+            throw new InvalidArgumentException('The encryption key is not valid.');
+        }
         $keyLength = \strlen($encryptionKey);
         $cipherKeyLength = \openssl_cipher_key_length($this->cipher);
         if ($keyLength !== $cipherKeyLength) {

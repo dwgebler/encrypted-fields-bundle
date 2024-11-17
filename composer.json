@@ -22,6 +22,9 @@
             "Gebler\\EncryptedFieldsBundle\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": { "Gebler\\EncryptedFieldsBundle\\Tests\\": "tests/" }
+    },
     "authors": [
         {
             "name": "David Gebler",

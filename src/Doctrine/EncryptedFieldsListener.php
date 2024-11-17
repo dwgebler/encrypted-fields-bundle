@@ -7,12 +7,12 @@ use Gebler\EncryptedFieldsBundle\Attribute\EncryptedField;
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
 use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
-use Gebler\EncryptedFieldsBundle\Service\EncryptionManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\PostLoadEventArgs;
 use Doctrine\ORM\Event\PostPersistEventArgs;
 use Doctrine\ORM\Event\PrePersistEventArgs;
 use Doctrine\ORM\Event\PreUpdateEventArgs;
+use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
 class EncryptedFieldsListener
@@ -23,7 +23,7 @@ class EncryptedFieldsListener
         private EncryptedFieldsRepository $encryptedFieldsRepository,
         private ParameterBagInterface $parameterBag,
         private EntityManagerInterface $em,
-        private EncryptionManager $encryptionManager,
+        private EncryptionManagerInterface $encryptionManager,
         private EncryptionKeyRepository $encryptionKeyRepository,
     ) {
     }

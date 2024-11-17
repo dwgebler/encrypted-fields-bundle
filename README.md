@@ -13,6 +13,9 @@ Note: This package requires the OpenSSL extension.
 
 Configure the Flex recipe repository:
 
+This step is optional, however without it, you will need to create the configuration file detailed in the Configuration 
+section manually, before installing the package.
+
 In your project's `composer.json`, add the following entry, or if you already
 have a `symfony.extra.endpoint` entry, add the URL to the list.
 
@@ -20,7 +23,7 @@ have a `symfony.extra.endpoint` entry, add the URL to the list.
     "extra": {
         "symfony": {
           "endpoint": [
-               "https://api.github.com/repos/dwgebler/encrypted-fields-bundle-flex/contents/index.json",
+               "https://api.github.com/repos/dwgebler/flex-recipes/contents/index.json",
                "flex://defaults"
             ]
         }

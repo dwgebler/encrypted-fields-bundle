@@ -2,6 +2,8 @@
 
 namespace Gebler\EncryptedFieldsBundle\Doctrine;
 
+use Doctrine\ORM\Event\LoadClassMetadataEventArgs;
+use Gebler\EncryptedFieldsBundle\Attribute\EncryptedField;
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
 use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
@@ -24,6 +26,25 @@ class EncryptedFieldsListener
         private EncryptionManager $encryptionManager,
         private EncryptionKeyRepository $encryptionKeyRepository,
     ) {
+    }
+
+    public function loadClassMetadata(LoadClassMetadataEventArgs $args): void
+    {
+        $classMetadata = $args->getClassMetadata();
+        $reflectionClass = $classMetadata->getReflectionClass();
+        foreach ($reflectionClass->getProperties() as $property) {
+            $attribute = $property->getAttributes(EncryptedField::class);
+            if (empty($attribute)) {
+                continue;
+            }
+            $attribute = $attribute[0]->newInstance();
+            $options = [
+                'elements' => $attribute->elements,
+                'useMasterKey' => $attribute->useMasterKey,
+                'key' => $attribute->key,
+            ];
+            $this->encryptedFieldsRepository->addField($classMetadata->getName(), $property->getName(), $options);
+        }
     }
 
     public function postPersist(PostPersistEventArgs $args): void

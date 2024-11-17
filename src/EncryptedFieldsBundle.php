@@ -4,7 +4,6 @@ namespace Gebler\EncryptedFieldsBundle;
 
 use Doctrine\Bundle\DoctrineBundle\DependencyInjection\Compiler\DoctrineOrmMappingsPass;
 use Doctrine\Persistence\ManagerRegistry;
-use Gebler\EncryptedFieldsBundle\CompilerPass\EncryptedFieldsCompilerPass;
 use Gebler\EncryptedFieldsBundle\Doctrine\EncryptedFieldsListener;
 use Gebler\EncryptedFieldsBundle\Doctrine\EncryptionKeyListener;
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
@@ -12,7 +11,6 @@ use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptionManager;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
-use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\DependencyInjection\Reference;
@@ -31,20 +29,11 @@ class EncryptedFieldsBundle extends AbstractBundle
                 ->scalarNode('cipher')
                     ->defaultValue('AES-256-GCM')
                 ->end()
-                ->scalarNode('entities_dir')
-                    ->defaultValue('%kernel.project_dir%/src/Entity')
-                ->end()
-                ->scalarNode('entities_namespace')
-                    ->defaultValue('App\\Entity')
-                ->end()
             ->end();
     }
 
     public function loadExtension(array $config, ContainerConfigurator $container, ContainerBuilder $builder): void
     {
-        $builder->setParameter('gebler.encrypted_fields.entities_dir', $config['entities_dir']);
-        $builder->setParameter('gebler.encrypted_fields.entities_namespace', $config['entities_namespace']);
-
         $container->services()
             ->set('gebler.encrypted_fields.encryption_manager', EncryptionManager::class)
             ->args([
@@ -72,7 +61,8 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->tag('doctrine.event_listener', ['event' => 'prePersist'])
             ->tag('doctrine.event_listener', ['event' => 'preUpdate'])
             ->tag('doctrine.event_listener', ['event' => 'postLoad'])
-            ->tag('doctrine.event_listener', ['event' => 'postPersist']);
+            ->tag('doctrine.event_listener', ['event' => 'postPersist'])
+            ->tag('doctrine.event_listener', ['event' => 'loadClassMetadata']);
         $container->services()
             ->set('gebler.encrypted_fields.encryption_key_entity_listener', EncryptionKeyListener::class)
             ->args([new Reference('gebler.encrypted_fields.encryption_manager')])
@@ -84,7 +74,6 @@ class EncryptedFieldsBundle extends AbstractBundle
 
     public function build(ContainerBuilder $container): void
     {
-        $container->addCompilerPass(new EncryptedFieldsCompilerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 10);
         $namespaces = [__DIR__.'/../config/doctrine' => 'Gebler\\EncryptedFieldsBundle\\Entity'];
         $container->addCompilerPass(
             DoctrineOrmMappingsPass::createXmlMappingDriver($namespaces)

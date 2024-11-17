@@ -11,6 +11,24 @@ These encryption keys are stored in a separate table and are encrypted with the 
 
 Note: This package requires the OpenSSL extension.
 
+Configure the Flex recipe repository:
+
+In your project's `composer.json`, add the following entry, or if you already
+have a `symfony.extra.endpoint` entry, add the URL to the list.
+
+```json
+    "extra": {
+        "symfony": {
+          "endpoint": [
+               "https://api.github.com/repos/dwgebler/encrypted-fields-bundle-flex/contents/index.json",
+               "flex://defaults"
+            ]
+        }
+    }
+```
+
+Install the package:
+
 ```bash
 composer require dwgebler/encrypted-fields-bundle
 ```
@@ -40,7 +58,7 @@ For the default algorithm, the key length is 256 bits (32 bytes).
 If you are using the default algorithm, a master key file can be generated with the following command:
 
 ```bash
-php -r "file_put_contents('master.key', bin2hex(random_bytes(32));"
+php -r "file_put_contents('master.key', bin2hex(random_bytes(32)));"
 ```
 
 ### Entity

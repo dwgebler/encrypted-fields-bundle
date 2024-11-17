@@ -25,6 +25,15 @@ class EncryptionManagerTest extends TestCase
         $this->assertEquals(64, strlen($key)); // 32 bytes in hex is 64 characters
     }
 
+    public function testEncryptDecryptWithAesCbc(): void
+    {
+        $data = 'test data';
+        $encryptionManager = new EncryptionManager($this->masterKey, 'aes-256-cbc');
+        $encrypted = $encryptionManager->encrypt($data, $this->masterKey);
+        $decrypted = $encryptionManager->decrypt($encrypted, $this->masterKey);
+        $this->assertEquals($data, $decrypted);
+    }
+
     public function testEncryptWithMasterKey(): void
     {
         $data = 'test data';

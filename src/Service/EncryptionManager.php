@@ -75,7 +75,10 @@ readonly class EncryptionManager implements EncryptionManagerInterface
         if ($encrypted === false) {
             throw new EncryptedFieldException('The data could not be encrypted: ' . \openssl_error_string());
         }
-        return \base64_encode($iv . $tag . $encrypted);
+        if (in_array($this->cipher, ['aes-256-gcm', 'aes-128-gcm', 'aes-256-ccm', 'aes-128-ccm'])) {
+            return \base64_encode($iv . $tag . $encrypted);
+        }
+        return \base64_encode($iv . $encrypted);
     }
 
     /**
@@ -98,16 +101,27 @@ readonly class EncryptionManager implements EncryptionManagerInterface
         $data = \base64_decode($data);
         $ivLen = \openssl_cipher_iv_length($this->cipher);
         $iv = \substr($data, 0, $ivLen);
-        $tag = \substr($data, $ivLen, 16);
-        $encrypted = \substr($data, $ivLen + 16);
-        $decrypted = @\openssl_decrypt(
-            $encrypted,
-            $this->cipher,
-            $encryptionKey,
-            0,
-            $iv,
-            $tag
-        );
+        if (in_array($this->cipher, ['aes-256-gcm', 'aes-128-gcm', 'aes-256-ccm', 'aes-128-ccm'])) {
+            $tag = \substr($data, $ivLen, 16);
+            $encrypted = \substr($data, $ivLen + 16);
+            $decrypted = @\openssl_decrypt(
+                $encrypted,
+                $this->cipher,
+                $encryptionKey,
+                0,
+                $iv,
+                $tag
+            );
+        } else {
+            $encrypted = \substr($data, $ivLen);
+            $decrypted = @\openssl_decrypt(
+                $encrypted,
+                $this->cipher,
+                $encryptionKey,
+                0,
+                $iv
+            );
+        }
         if ($decrypted === false) {
             throw new EncryptedFieldException('The data could not be decrypted: ' . \openssl_error_string());
         }

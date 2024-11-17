@@ -35,7 +35,7 @@
     "extra": {
         "symfony": {
             "endpoint": [
-                "https://api.github.com/repos/dwgebler/encrypted-fields-bundle-flex/contents/index.json",
+                "https://api.github.com/repos/dwgebler/flex-recipes/contents/index.json",
                 "flex://defaults"
             ]
         }

@@ -1,0 +1,31 @@
+{
+    "name": "dwgebler/encrypted-fields-bundle",
+    "description": "Symfony bundle adding support to automatically encrypt fields of Doctrine entities",
+    "type": "symfony-bundle",
+    "require": {
+        "php": "^8.2",
+        "ext-openssl": "*",
+        "symfony/http-kernel": "^7.1",
+        "symfony/config": "^7.1",
+        "symfony/dependency-injection": "^7.1",
+        "doctrine/orm": "^2.12",
+        "doctrine/doctrine-bundle": "^2.13",
+        "symfony/finder": "^7.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5",
+        "vimeo/psalm": "^5.26"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Gebler\\EncryptedFieldsBundle\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "David Gebler",
+            "email": "me@davegebler.com"
+        }
+    ]
+}

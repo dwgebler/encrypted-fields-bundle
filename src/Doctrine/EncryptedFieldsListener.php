@@ -3,6 +3,7 @@
 namespace Gebler\EncryptedFieldsBundle\Doctrine;
 
 use Doctrine\ORM\Event\LoadClassMetadataEventArgs;
+use Doctrine\ORM\Event\PostUpdateEventArgs;
 use Gebler\EncryptedFieldsBundle\Attribute\EncryptedField;
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
 use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
@@ -57,6 +58,7 @@ class EncryptedFieldsListener
                 $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
             }
             $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
+            $encryptionKey->setMasterEncrypted(true);
             $encryptionKey->setEntityId($entity->getId());
             $connection = $this->em->getConnection();
             $nextId = $connection->fetchOne('SELECT nextval(\'encryption_key_id_seq\')');
@@ -67,7 +69,16 @@ class EncryptedFieldsListener
                 'key' => $encryptionKey->getKey(),
             ]);
             unset($this->encryptionKeysToLink[spl_object_hash($entity)]);
+            $this->decryptFields($entity, $encryptionKey);
+            return;
         }
+        $this->decryptFields($entity);
+    }
+
+    public function postUpdate(PostUpdateEventArgs $args): void
+    {
+        $entity = $args->getObject();
+        $this->decryptFields($entity);
     }
 
     public function prePersist(PrePersistEventArgs $args): void
@@ -85,6 +96,11 @@ class EncryptedFieldsListener
     public function postLoad(PostLoadEventArgs $args): void
     {
         $entity = $args->getObject();
+        $this->decryptFields($entity);
+    }
+
+    private function decryptFields(object $entity, ?EncryptionKey $encryptionKey = null): void
+    {
         $fields = $this->encryptedFieldsRepository->getFields(get_class($entity));
 
         if (empty($fields)) {
@@ -95,7 +111,7 @@ class EncryptedFieldsListener
         $identifierField = $classMetadata->getIdentifierFieldNames()[0];
         $entityId = $classMetadata->getFieldValue($entity, $identifierField);
 
-        $encryptionKey = $this->encryptionKeyRepository->findOneBy([
+        $encryptionKey ??= $this->encryptionKeyRepository->findOneBy([
             'entityId' => $entityId,
             'entityClass' => get_class($entity),
         ]);

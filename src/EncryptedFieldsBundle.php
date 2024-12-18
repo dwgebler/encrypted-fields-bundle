@@ -61,6 +61,7 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->tag('container.service_arguments')
             ->tag('doctrine.event_listener', ['event' => 'prePersist'])
             ->tag('doctrine.event_listener', ['event' => 'preUpdate'])
+            ->tag('doctrine.event_listener', ['event' => 'postUpdate'])
             ->tag('doctrine.event_listener', ['event' => 'postLoad'])
             ->tag('doctrine.event_listener', ['event' => 'postPersist'])
             ->tag('doctrine.event_listener', ['event' => 'loadClassMetadata']);

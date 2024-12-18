@@ -174,6 +174,7 @@ class EncryptedFieldsListener
 
             if (!$key && !$encryptionKey) {
                 $encryptionKey = new EncryptionKey();
+                $encryptionKey->setMasterEncrypted(false);
                 $encryptionKey->setEntityClass(get_class($entity));
                 $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
                 if ($entityId) {

@@ -101,3 +101,36 @@ inserting or updating the row in the database.
 When you retrieve an entity with encrypted fields, the bundle will automatically decrypt the fields before
 returning the entity.
 
+### Key Rotation
+
+If you need to rotate the master key, you can do so by running the following command:
+
+```bash
+php bin/console gebler:encryption:rotate-key --generate-new-key
+```
+
+This will generate a new master key and re-encrypt all the data in the database with new keys.
+The new key will be output to the console at the end of the process.
+
+If you need to apply a known decryption key (for example, you've taken a database backup from a different environment),
+you can do so by running the following command:
+
+```bash
+php bin/console gebler:encryption:rotate-key --database-key=<key>
+```
+
+Where `<key>` is the hexadecimal representation of the key you want to apply. Or, to use a key in a file:
+
+```bash
+php bin/console gebler:encryption:rotate-key --database-key-file=/path/todatabase.key
+```
+
+These commands will decrypt all the data in the database with the database key supplied and re-encrypt with
+the configured application master key.
+
+You can combine the two options above with `--generate-new-key` to generate a new master key also:
+
+```bash
+php bin/console gebler:encryption:rotate-key --generate-new-key --database-key=<key>
+```
+

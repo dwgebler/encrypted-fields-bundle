@@ -15,6 +15,7 @@ class EncryptionKeyListener
     {
         if ($encryptionKey->getKey() === null) {
             $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
+            $encryptionKey->setMasterEncrypted(false);
         }
         if (!$encryptionKey->isMasterEncrypted()) {
             return;

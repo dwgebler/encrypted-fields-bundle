@@ -120,6 +120,8 @@ class EncryptedFieldsListener
             return;
         }
 
+        $this->em->detach($encryptionKey);
+
         if ($encryptionKey->isMasterEncrypted()) {
             $encryptionKey->setKey($this->encryptionManager->decryptWithMasterKey($encryptionKey->getKey()));
             $encryptionKey->setMasterEncrypted(false);
@@ -180,6 +182,10 @@ class EncryptedFieldsListener
             'entityId' => $entityId,
             'entityClass' => get_class($entity),
         ]) : null;
+
+        if ($encryptionKey) {
+            $this->em->detach($encryptionKey);
+        }
 
         foreach ($fields as $field => $options) {
             if (isset($options['key'])) {

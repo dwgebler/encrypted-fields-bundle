@@ -120,6 +120,11 @@ class EncryptedFieldsListener
             return;
         }
 
+        if ($encryptionKey->isMasterEncrypted()) {
+            $encryptionKey->setKey($this->encryptionManager->decryptWithMasterKey($encryptionKey->getKey()));
+            $encryptionKey->setMasterEncrypted(false);
+        }
+
         foreach ($fields as $field => $options) {
             if (isset($options['key'])) {
                 $options['key'] = $this->parameterBag->resolveValue($options['key']);

@@ -130,6 +130,9 @@ EOT;
             $entityKey = $this->encryptionManager->decryptWithMasterKey($encryptedEntity->getKey());
             $fields = $this->encryptedFieldsRepository->getFields($encryptedEntity->getEntityClass());
             $entity = $this->em->getRepository($encryptedEntity->getEntityClass())->find($encryptedEntity->getEntityId());
+            if (!$entity) {
+                continue;
+            }
             $newRecordKey = $this->encryptionManager->createEncryptionKey();
             foreach ($fields as $field => $options) {
                 if (isset($options['key'])) {

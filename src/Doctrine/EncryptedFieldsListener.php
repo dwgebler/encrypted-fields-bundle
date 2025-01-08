@@ -2,6 +2,7 @@
 
 namespace Gebler\EncryptedFieldsBundle\Doctrine;
 
+use Doctrine\Common\Util\ClassUtils;
 use Doctrine\ORM\Event\LoadClassMetadataEventArgs;
 use Doctrine\ORM\Event\PostUpdateEventArgs;
 use Gebler\EncryptedFieldsBundle\Attribute\EncryptedField;
@@ -101,19 +102,20 @@ class EncryptedFieldsListener
 
     private function decryptFields(object $entity, ?EncryptionKey $encryptionKey = null): void
     {
-        $fields = $this->encryptedFieldsRepository->getFields(get_class($entity));
+        $realClass = ClassUtils::getRealClass($entity);
+        $fields = $this->encryptedFieldsRepository->getFields($realClass);
 
         if (empty($fields)) {
             return;
         }
 
-        $classMetadata = $this->em->getClassMetadata(get_class($entity));
+        $classMetadata = $this->em->getClassMetadata($realClass);
         $identifierField = $classMetadata->getIdentifierFieldNames()[0];
         $entityId = $classMetadata->getFieldValue($entity, $identifierField);
 
         $encryptionKey ??= $this->encryptionKeyRepository->findOneBy([
             'entityId' => $entityId,
-            'entityClass' => get_class($entity),
+            'entityClass' => $realClass,
         ]);
 
         if (!$encryptionKey) {
@@ -168,19 +170,20 @@ class EncryptedFieldsListener
 
     private function encryptFields(object $entity): void
     {
-        $fields = $this->encryptedFieldsRepository->getFields(get_class($entity));
+        $realClass = ClassUtils::getRealClass($entity);
+        $fields = $this->encryptedFieldsRepository->getFields($realClass);
 
         if (empty($fields)) {
             return;
         }
 
-        $classMetadata = $this->em->getClassMetadata(get_class($entity));
+        $classMetadata = $this->em->getClassMetadata($realClass);
         $identifierField = $classMetadata->getIdentifierFieldNames()[0];
         $entityId = $classMetadata->getFieldValue($entity, $identifierField);
 
         $encryptionKey = $entityId ? $this->encryptionKeyRepository->findOneBy([
             'entityId' => $entityId,
-            'entityClass' => get_class($entity),
+            'entityClass' => $realClass,
         ]) : null;
 
         if ($encryptionKey) {
@@ -202,7 +205,7 @@ class EncryptedFieldsListener
             if (!$key && !$encryptionKey) {
                 $encryptionKey = new EncryptionKey();
                 $encryptionKey->setMasterEncrypted(false);
-                $encryptionKey->setEntityClass(get_class($entity));
+                $encryptionKey->setEntityClass($realClass);
                 $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
                 if ($entityId) {
                     $encryptionKey->setEntityId($entityId);

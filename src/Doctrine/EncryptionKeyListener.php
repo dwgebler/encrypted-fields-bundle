@@ -18,10 +18,9 @@ class EncryptionKeyListener
             $encryptionKey->setMasterEncrypted(false);
         }
         if (!$encryptionKey->isMasterEncrypted()) {
-            return;
+            $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
+            $encryptionKey->setMasterEncrypted(true);
         }
-        $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
-        $encryptionKey->setMasterEncrypted(true);
     }
 
     public function prePersist(EncryptionKey $encryptionKey): void

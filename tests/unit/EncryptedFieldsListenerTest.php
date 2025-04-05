@@ -70,6 +70,16 @@ class EncryptedFieldsListenerTest extends TestCase
         $encryptionKey = new EncryptionKey();
         $encryptionKey->setKey('test-key');
 
+        $classMetadata = $this->createMock(ClassMetadata::class);
+        $reflectionClass = new ReflectionClass(StubEntity::class);
+
+        $classMetadata->method('getReflectionClass')->willReturn($reflectionClass);
+        $classMetadata->method('getName')->willReturn(StubEntity::class);
+        $classMetadata->method('getIdentifierFieldNames')->willReturn(['id']);
+        $classMetadata->method('getFieldValue')->with($entity, 'id')->willReturn('1');
+
+        $this->em->method('getClassMetadata')->willReturn($classMetadata);
+
         $this->encryptionManager->createEncryptionKey();
         $this->encryptionManager->encryptWithMasterKey('test-data');
         $this->em->method('getConnection')->willReturn($this->createMock(\Doctrine\DBAL\Connection::class));
@@ -90,6 +100,7 @@ class EncryptedFieldsListenerTest extends TestCase
         $entity->setField('test-data');
         $classMetadata = $this->createMock(ClassMetadata::class);
         $classMetadata->method('getIdentifierFieldNames')->willReturn(['id']);
+        $classMetadata->method('getFieldValue')->with($entity, 'id')->willReturn('1');
         $this->em->method('getClassMetadata')->willReturn($classMetadata);
 
         $this->encryptedFieldsRepository->addField(get_class($entity), 'field', ['key' => 'test-key']);
@@ -107,7 +118,9 @@ class EncryptedFieldsListenerTest extends TestCase
         $entity->setField('test-data');
         $classMetadata = $this->createMock(ClassMetadata::class);
         $classMetadata->method('getIdentifierFieldNames')->willReturn(['id']);
+        $classMetadata->method('getFieldValue')->with($entity, 'id')->willReturn('1');
         $this->em->method('getClassMetadata')->willReturn($classMetadata);
+        $this->em->method('getConnection')->willReturn($this->createMock(\Doctrine\DBAL\Connection::class));
 
         $this->encryptedFieldsRepository->addField(get_class($entity), 'field', ['key' => 'test-key']);
 
@@ -125,6 +138,7 @@ class EncryptedFieldsListenerTest extends TestCase
         $entity->setField('test-data');
         $classMetadata = $this->createMock(ClassMetadata::class);
         $classMetadata->method('getIdentifierFieldNames')->willReturn(['id']);
+        $classMetadata->method('getFieldValue')->with($entity, 'id')->willReturn('1');
         $this->em->method('getClassMetadata')->willReturn($classMetadata);
 
         $this->encryptedFieldsRepository->addField(get_class($entity), 'field', ['key' => 'test-key']);

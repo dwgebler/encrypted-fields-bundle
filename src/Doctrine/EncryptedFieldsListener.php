@@ -52,6 +52,16 @@ class EncryptedFieldsListener
     public function postPersist(PostPersistEventArgs $args): void
     {
         $entity = $args->getObject();
+        $this->decryptFields($entity);
+    }
+
+    private function persistEncryptionKey(object $entity): void
+    {
+        $realClass = ClassUtils::getClass($entity);
+        $classMetadata = $this->em->getClassMetadata($realClass);
+        $identifierField = $classMetadata->getIdentifierFieldNames()[0];
+        $entityId = $classMetadata->getFieldValue($entity, $identifierField);
+
         if (isset($this->encryptionKeysToLink[spl_object_hash($entity)])) {
             /** @var EncryptionKey $encryptionKey */
             $encryptionKey = $this->encryptionKeysToLink[spl_object_hash($entity)];
@@ -60,7 +70,7 @@ class EncryptedFieldsListener
             }
             $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
             $encryptionKey->setMasterEncrypted(true);
-            $encryptionKey->setEntityId($entity->getId());
+            $encryptionKey->setEntityId($entityId);
             $connection = $this->em->getConnection();
             $nextId = $connection->fetchOne('SELECT nextval(\'encryption_key_id_seq\')');
             $connection->insert('encryption_key', [
@@ -71,9 +81,8 @@ class EncryptedFieldsListener
             ]);
             unset($this->encryptionKeysToLink[spl_object_hash($entity)]);
             $this->decryptFields($entity, $encryptionKey);
-            return;
         }
-        $this->decryptFields($entity);
+
     }
 
     public function postUpdate(PostUpdateEventArgs $args): void
@@ -92,6 +101,7 @@ class EncryptedFieldsListener
     {
         $entity = $args->getObject();
         $this->encryptFields($entity);
+        $this->persistEncryptionKey($entity);
     }
 
     public function postLoad(PostLoadEventArgs $args): void
@@ -102,7 +112,7 @@ class EncryptedFieldsListener
 
     private function decryptFields(object $entity, ?EncryptionKey $encryptionKey = null): void
     {
-        $realClass = ClassUtils::getRealClass($entity);
+        $realClass = ClassUtils::getClass($entity);
         $fields = $this->encryptedFieldsRepository->getFields($realClass);
 
         if (empty($fields)) {
@@ -170,7 +180,7 @@ class EncryptedFieldsListener
 
     private function encryptFields(object $entity): void
     {
-        $realClass = ClassUtils::getRealClass($entity);
+        $realClass = ClassUtils::getClass($entity);
         $fields = $this->encryptedFieldsRepository->getFields($realClass);
 
         if (empty($fields)) {
@@ -209,10 +219,8 @@ class EncryptedFieldsListener
                 $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
                 if ($entityId) {
                     $encryptionKey->setEntityId($entityId);
-                    $this->em->persist($encryptionKey);
-                } else {
-                    $this->encryptionKeysToLink[spl_object_hash($entity)] = $encryptionKey;
                 }
+                $this->encryptionKeysToLink[spl_object_hash($entity)] = $encryptionKey;
             }
 
             if (is_array($fieldValue) && $elements !== null) {

@@ -81,7 +81,6 @@ class EncryptedFieldsListener
                 'key' => $encryptionKey->getKey(),
             ]);
             unset($this->encryptionKeysToLink[spl_object_hash($entity)]);
-            $this->decryptFields($entity, $encryptionKey);
         }
 
     }

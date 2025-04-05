@@ -52,6 +52,7 @@ class EncryptedFieldsListener
     public function postPersist(PostPersistEventArgs $args): void
     {
         $entity = $args->getObject();
+        $this->persistEncryptionKey($entity);
         $this->decryptFields($entity);
     }
 

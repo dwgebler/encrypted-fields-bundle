@@ -19,6 +19,7 @@ use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 class EncryptedFieldsBundle extends AbstractBundle
 {
+    #[\Override]
     public function configure(DefinitionConfigurator $definition): void
     {
         $definition->rootNode()
@@ -33,6 +34,7 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->end();
     }
 
+    #[\Override]
     public function loadExtension(array $config, ContainerConfigurator $container, ContainerBuilder $builder): void
     {
         $container->services()
@@ -84,6 +86,7 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->tag('console.command');
     }
 
+    #[\Override]
     public function build(ContainerBuilder $container): void
     {
         $namespaces = [__DIR__.'/../config/doctrine' => 'Gebler\\EncryptedFieldsBundle\\Entity'];

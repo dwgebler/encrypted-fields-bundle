@@ -18,6 +18,7 @@ readonly class EncryptionManager implements EncryptionManagerInterface
     /**
      * @throws RandomException
      */
+    #[\Override]
     public function createEncryptionKey(): string
     {
         return \bin2hex(\random_bytes(\openssl_cipher_key_length($this->cipher)));
@@ -27,6 +28,7 @@ readonly class EncryptionManager implements EncryptionManagerInterface
      * @throws RandomException
      * @throws EncryptedFieldException if the data could not be encrypted
      */
+    #[\Override]
     public function encryptWithMasterKey(string $data): string
     {
         return $this->encrypt($data, $this->masterKey);
@@ -35,6 +37,7 @@ readonly class EncryptionManager implements EncryptionManagerInterface
     /**
      * @throws EncryptedFieldException if the data could not be decrypted
      */
+    #[\Override]
     public function decryptWithMasterKey(string $data): string
     {
         return $this->decrypt($data, $this->masterKey);
@@ -45,6 +48,7 @@ readonly class EncryptionManager implements EncryptionManagerInterface
      * @throws InvalidArgumentException if the encryption key length is invalid
      * @throws EncryptedFieldException if the data could not be encrypted
      */
+    #[\Override]
     public function encrypt(string $data, string $encryptionKey): string
     {
         if (\strlen($data) === 0) {
@@ -84,6 +88,7 @@ readonly class EncryptionManager implements EncryptionManagerInterface
     /**
      * @throws EncryptedFieldException
      */
+    #[\Override]
     public function decrypt(string $data, string $encryptionKey): string
     {
         if (\strlen($data) === 0) {

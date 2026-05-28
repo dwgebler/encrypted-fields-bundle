@@ -8,6 +8,9 @@ use Gebler\EncryptedFieldsBundle\Exception\InvalidEncryptionKeyException;
 
 class EncryptionManager implements EncryptionManagerInterface
 {
+    /** Default OpenSSL auth-tag length for GCM/CCM/OCB modes. */
+    private const AUTH_TAG_BYTES = 16;
+
     private readonly string $cipher;
     private readonly bool $authenticated;
     private readonly int $keyLengthBytes;
@@ -64,7 +67,7 @@ class EncryptionManager implements EncryptionManagerInterface
         $iv = \random_bytes($ivLen);
         $tag = null;
         if ($this->authenticated) {
-            $encrypted = @\openssl_encrypt($data, $this->cipher, $rawKey, 0, $iv, $tag, '', 16);
+            $encrypted = @\openssl_encrypt($data, $this->cipher, $rawKey, 0, $iv, $tag, '', self::AUTH_TAG_BYTES);
         } else {
             $encrypted = @\openssl_encrypt($data, $this->cipher, $rawKey, 0, $iv);
         }
@@ -86,14 +89,14 @@ class EncryptionManager implements EncryptionManagerInterface
             throw new InvalidEncryptedDataException('The data is not valid base64.');
         }
         $ivLen = \openssl_cipher_iv_length($this->cipher);
-        $minLen = $ivLen + ($this->authenticated ? 16 : 0);
-        if (\strlen($decoded) < $minLen) {
+        $tagLen = $this->authenticated ? self::AUTH_TAG_BYTES : 0;
+        if (\strlen($decoded) < $ivLen + $tagLen) {
             throw new InvalidEncryptedDataException('The encrypted payload is shorter than the IV/tag prefix.');
         }
         $iv = \substr($decoded, 0, $ivLen);
         if ($this->authenticated) {
-            $tag = \substr($decoded, $ivLen, 16);
-            $ciphertext = \substr($decoded, $ivLen + 16);
+            $tag = \substr($decoded, $ivLen, $tagLen);
+            $ciphertext = \substr($decoded, $ivLen + $tagLen);
             $plain = @\openssl_decrypt($ciphertext, $this->cipher, $rawKey, 0, $iv, $tag);
         } else {
             $ciphertext = \substr($decoded, $ivLen);

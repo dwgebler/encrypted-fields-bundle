@@ -107,7 +107,10 @@ class EncryptionManagerTest extends TestCase
 
     public function testGetKeyLengthBytesMatchesOpenSsl(): void
     {
-        $this->assertSame(32, $this->encryptionManager->getKeyLengthBytes());
+        $this->assertSame(
+            \openssl_cipher_key_length('aes-256-gcm'),
+            $this->encryptionManager->getKeyLengthBytes(),
+        );
     }
 
     public function testDecryptThrowsInvalidEncryptedDataExceptionOnEmpty(): void

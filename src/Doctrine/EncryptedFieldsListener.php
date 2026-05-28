@@ -17,6 +17,25 @@ use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
+/**
+ * Bridges Doctrine lifecycle events to symmetric encryption of `#[EncryptedField]`
+ * properties. Two crypto paths live here:
+ *
+ * - Listener path: `postLoad` decrypts ciphertext into the entity properties and
+ *   patches `UnitOfWork::originalEntityData` with the plain values so subsequent
+ *   change-set computation compares plain-vs-plain. `preUpdate` encrypts changed
+ *   fields back to ciphertext via `PreUpdateEventArgs::setNewValue` — never via
+ *   the entity setter, since the UPDATE SQL is built from the change set, not
+ *   the entity. Unchanged fields are skipped, so no re-encryption occurs.
+ * - Clone-with-plain-key path: when a new EncryptionKey is persisted, the
+ *   companion `EncryptionKeyListener` master-encrypts it in place during flush.
+ *   `persistAndCloneWithPlainKey` captures the plain key before flush so the
+ *   caller can continue to encrypt/decrypt this entity's fields with it.
+ *
+ * The rotation command (`RotateEncryptionKeyCommand`) uses a third path that
+ * disables both listeners via `setEnabled(false)` and handles master encryption
+ * manually. The toggle exists to keep the three paths from interfering.
+ */
 class EncryptedFieldsListener
 {
     private bool $enabled = true;

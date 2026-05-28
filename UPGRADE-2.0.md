@@ -10,6 +10,8 @@
 
 4. **`EncryptedFieldsListener` and `EncryptionKeyListener` now expose `setEnabled(bool)`** to let bulk-import or migration scripts suspend the listeners.
 
+5. **`EncryptedFieldsListener` subscribes to `postUpdate` in 2.0** (a no-op handler — the listener uses `PreUpdateEventArgs::setNewValue` to feed ciphertext into the change set, so `postUpdate` has no work to do). 1.x did not subscribe to `postUpdate` at all. Relevant only if you decorate or extend the listener.
+
 ## Required actions
 
 1. `composer require dwgebler/encrypted-fields-bundle:^2.0`

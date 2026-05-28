@@ -10,6 +10,7 @@
         </id>
         <field name="entityClass" type="string" length="255" column="entity_class"/>
         <field name="entityId" type="string" length="255" column="entity_id"/>
+        <!-- Ciphertext length is unbounded (depends on plaintext); TEXT avoids truncation. -->
         <field name="key" type="text" column="encryption_key"/>
         <field name="masterEncrypted" type="boolean" column="master_encrypted"/>
         <unique-constraints>

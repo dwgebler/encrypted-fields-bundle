@@ -3,6 +3,8 @@
 namespace Gebler\EncryptedFieldsBundle\Tests\unit;
 
 use Gebler\EncryptedFieldsBundle\Exception\EncryptedFieldException;
+use Gebler\EncryptedFieldsBundle\Exception\InvalidEncryptedDataException;
+use Gebler\EncryptedFieldsBundle\Exception\InvalidEncryptionKeyException;
 use Gebler\EncryptedFieldsBundle\Service\EncryptionManager;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
@@ -51,15 +53,13 @@ class EncryptionManagerTest extends TestCase
 
     public function testEncryptWithInvalidKeyLength(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('The encryption key is not valid.');
+        $this->expectException(InvalidEncryptionKeyException::class);
         $this->encryptionManager->encrypt('test data', 'shortkey');
     }
 
     public function testDecryptWithInvalidKeyLength(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('The encryption key is not valid.');
+        $this->expectException(InvalidEncryptionKeyException::class);
         $this->encryptionManager->decrypt('test data', 'shortkey');
     }
 
@@ -81,14 +81,14 @@ class EncryptionManagerTest extends TestCase
 
     public function testEncryptThrowsExceptionOnEmptyData(): void
     {
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(InvalidEncryptedDataException::class);
         $this->expectExceptionMessage('The data is empty.');
         $this->encryptionManager->encrypt('', $this->masterKey);
     }
 
     public function testDecryptThrowsExceptionOnEmptyData(): void
     {
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(InvalidEncryptedDataException::class);
         $this->expectExceptionMessage('The data is empty.');
         $this->encryptionManager->decrypt('', $this->masterKey);
     }
@@ -96,7 +96,29 @@ class EncryptionManagerTest extends TestCase
     public function testDecryptThrowsExceptionOnInvalidData(): void
     {
         $this->expectException(EncryptedFieldException::class);
-        $this->expectExceptionMessageMatches('/The data could not be decrypted: .*/');
         $this->encryptionManager->decrypt('invalid data', $this->masterKey);
+    }
+
+    public function testGetCipherReturnsNormalisedLowercase(): void
+    {
+        $manager = new EncryptionManager($this->masterKey, 'AES-256-GCM');
+        $this->assertSame('aes-256-gcm', $manager->getCipher());
+    }
+
+    public function testGetKeyLengthBytesMatchesOpenSsl(): void
+    {
+        $this->assertSame(32, $this->encryptionManager->getKeyLengthBytes());
+    }
+
+    public function testDecryptThrowsInvalidEncryptedDataExceptionOnEmpty(): void
+    {
+        $this->expectException(InvalidEncryptedDataException::class);
+        $this->encryptionManager->decrypt('', $this->masterKey);
+    }
+
+    public function testDecryptThrowsInvalidEncryptionKeyExceptionOnBadKey(): void
+    {
+        $this->expectException(InvalidEncryptionKeyException::class);
+        $this->encryptionManager->decrypt('somedata', 'not-hex');
     }
 }

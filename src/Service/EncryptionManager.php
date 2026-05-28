@@ -3,133 +3,119 @@
 namespace Gebler\EncryptedFieldsBundle\Service;
 
 use Gebler\EncryptedFieldsBundle\Exception\EncryptedFieldException;
-use InvalidArgumentException;
-use Random\RandomException;
+use Gebler\EncryptedFieldsBundle\Exception\InvalidEncryptedDataException;
+use Gebler\EncryptedFieldsBundle\Exception\InvalidEncryptionKeyException;
 
-readonly class EncryptionManager implements EncryptionManagerInterface
+class EncryptionManager implements EncryptionManagerInterface
 {
-    public function __construct(private string $masterKey, private string $cipher = 'aes-256-gcm')
+    private readonly string $cipher;
+    private readonly bool $authenticated;
+    private readonly int $keyLengthBytes;
+
+    public function __construct(private readonly string $masterKey, string $cipher = 'aes-256-gcm')
     {
-        if (!\in_array($this->cipher, \openssl_get_cipher_methods())) {
-            throw new InvalidArgumentException('The cipher is not supported.');
+        $normalised = strtolower($cipher);
+        if (!\in_array($normalised, \openssl_get_cipher_methods(), true)) {
+            throw new \InvalidArgumentException('The cipher is not supported.');
         }
+        $this->cipher = $normalised;
+        $this->authenticated = (bool) preg_match('/-(gcm|ccm|ocb)$/', $this->cipher);
+        $this->keyLengthBytes = \openssl_cipher_key_length($this->cipher);
     }
 
-    /**
-     * @throws RandomException
-     */
+    #[\Override]
+    public function getCipher(): string
+    {
+        return $this->cipher;
+    }
+
+    #[\Override]
+    public function getKeyLengthBytes(): int
+    {
+        return $this->keyLengthBytes;
+    }
+
     #[\Override]
     public function createEncryptionKey(): string
     {
-        return \bin2hex(\random_bytes(\openssl_cipher_key_length($this->cipher)));
+        return \bin2hex(\random_bytes($this->keyLengthBytes));
     }
 
-    /**
-     * @throws RandomException
-     * @throws EncryptedFieldException if the data could not be encrypted
-     */
     #[\Override]
     public function encryptWithMasterKey(string $data): string
     {
         return $this->encrypt($data, $this->masterKey);
     }
 
-    /**
-     * @throws EncryptedFieldException if the data could not be decrypted
-     */
     #[\Override]
     public function decryptWithMasterKey(string $data): string
     {
         return $this->decrypt($data, $this->masterKey);
     }
 
-    /**
-     * @throws RandomException
-     * @throws InvalidArgumentException if the encryption key length is invalid
-     * @throws EncryptedFieldException if the data could not be encrypted
-     */
     #[\Override]
     public function encrypt(string $data, string $encryptionKey): string
     {
-        if (\strlen($data) === 0) {
-            throw new InvalidArgumentException('The data is empty.');
+        if ($data === '') {
+            throw new InvalidEncryptedDataException('The data is empty.');
         }
-        $encryptionKey = @\hex2bin($encryptionKey);
-        if ($encryptionKey === false) {
-            throw new InvalidArgumentException('The encryption key is not valid.');
-        }
-        $keyLength = \strlen($encryptionKey);
-        $cipherKeyLength = \openssl_cipher_key_length($this->cipher);
-        if ($keyLength !== $cipherKeyLength) {
-            throw new InvalidArgumentException('The encryption key length is invalid.');
-        }
+        $rawKey = $this->decodeKey($encryptionKey);
         $ivLen = \openssl_cipher_iv_length($this->cipher);
         $iv = \random_bytes($ivLen);
         $tag = null;
-        $encrypted = @\openssl_encrypt(
-            $data,
-            $this->cipher,
-            $encryptionKey,
-            0,
-            $iv,
-            $tag,
-            "",
-            16
-        );
+        if ($this->authenticated) {
+            $encrypted = @\openssl_encrypt($data, $this->cipher, $rawKey, 0, $iv, $tag, '', 16);
+        } else {
+            $encrypted = @\openssl_encrypt($data, $this->cipher, $rawKey, 0, $iv);
+        }
         if ($encrypted === false) {
             throw new EncryptedFieldException('The data could not be encrypted: ' . \openssl_error_string());
         }
-        if (in_array($this->cipher, ['aes-256-gcm', 'aes-128-gcm', 'aes-256-ccm', 'aes-128-ccm'])) {
-            return \base64_encode($iv . $tag . $encrypted);
-        }
-        return \base64_encode($iv . $encrypted);
+        return \base64_encode($iv . ($this->authenticated ? $tag : '') . $encrypted);
     }
 
-    /**
-     * @throws EncryptedFieldException
-     */
     #[\Override]
     public function decrypt(string $data, string $encryptionKey): string
     {
-        if (\strlen($data) === 0) {
-            throw new InvalidArgumentException('The data is empty.');
+        if ($data === '') {
+            throw new InvalidEncryptedDataException('The data is empty.');
         }
-        $encryptionKey = @\hex2bin($encryptionKey);
-        if ($encryptionKey === false) {
-            throw new InvalidArgumentException('The encryption key is not valid.');
+        $rawKey = $this->decodeKey($encryptionKey);
+        $decoded = \base64_decode($data, true);
+        if ($decoded === false) {
+            throw new InvalidEncryptedDataException('The data is not valid base64.');
         }
-        $keyLength = \strlen($encryptionKey);
-        $cipherKeyLength = \openssl_cipher_key_length($this->cipher);
-        if ($keyLength !== $cipherKeyLength) {
-            throw new InvalidArgumentException('The encryption key length is invalid');
-        }
-        $data = \base64_decode($data);
         $ivLen = \openssl_cipher_iv_length($this->cipher);
-        $iv = \substr($data, 0, $ivLen);
-        if (in_array($this->cipher, ['aes-256-gcm', 'aes-128-gcm', 'aes-256-ccm', 'aes-128-ccm'])) {
-            $tag = \substr($data, $ivLen, 16);
-            $encrypted = \substr($data, $ivLen + 16);
-            $decrypted = @\openssl_decrypt(
-                $encrypted,
-                $this->cipher,
-                $encryptionKey,
-                0,
-                $iv,
-                $tag
-            );
-        } else {
-            $encrypted = \substr($data, $ivLen);
-            $decrypted = @\openssl_decrypt(
-                $encrypted,
-                $this->cipher,
-                $encryptionKey,
-                0,
-                $iv
-            );
+        $minLen = $ivLen + ($this->authenticated ? 16 : 0);
+        if (\strlen($decoded) < $minLen) {
+            throw new InvalidEncryptedDataException('The encrypted payload is shorter than the IV/tag prefix.');
         }
-        if ($decrypted === false) {
+        $iv = \substr($decoded, 0, $ivLen);
+        if ($this->authenticated) {
+            $tag = \substr($decoded, $ivLen, 16);
+            $ciphertext = \substr($decoded, $ivLen + 16);
+            $plain = @\openssl_decrypt($ciphertext, $this->cipher, $rawKey, 0, $iv, $tag);
+        } else {
+            $ciphertext = \substr($decoded, $ivLen);
+            $plain = @\openssl_decrypt($ciphertext, $this->cipher, $rawKey, 0, $iv);
+        }
+        if ($plain === false) {
             throw new EncryptedFieldException('The data could not be decrypted: ' . \openssl_error_string());
         }
-        return $decrypted;
+        return $plain;
+    }
+
+    private function decodeKey(string $encryptionKey): string
+    {
+        $raw = @\hex2bin($encryptionKey);
+        if ($raw === false) {
+            throw new InvalidEncryptionKeyException('The encryption key is not valid hex.');
+        }
+        if (\strlen($raw) !== $this->keyLengthBytes) {
+            throw new InvalidEncryptionKeyException(
+                sprintf('Expected %d-byte key for cipher %s; got %d bytes.', $this->keyLengthBytes, $this->cipher, \strlen($raw))
+            );
+        }
+        return $raw;
     }
 }

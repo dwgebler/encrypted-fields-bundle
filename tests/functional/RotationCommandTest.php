@@ -81,15 +81,17 @@ class RotationCommandTest extends FunctionalTestCase
         $this->assertSame('shhh', $reloaded->getMetadata()['secret']);
     }
 
-    public function testRotateSkipsOrphanEncryptionKeyRow(): void
+    public function testRotateReEncryptsOrphanEncryptionKeyRow(): void
     {
+        $originalPlainKey = $this->encryptionManager->createEncryptionKey();
         $orphan = new EncryptionKey();
         $orphan->setEntityClass(UserEntity::class);
         $orphan->setEntityId('999999');
-        $orphan->setKey($this->encryptionManager->createEncryptionKey());
+        $orphan->setKey($originalPlainKey);
         $orphan->setMasterEncrypted(false);
         $this->em->persist($orphan);
         $this->em->flush();
+        $orphanId = $orphan->getId();
         $this->em->clear();
 
         $command = new RotateEncryptionKeyCommand(
@@ -105,5 +107,18 @@ class RotationCommandTest extends FunctionalTestCase
         $tester = new CommandTester($command);
         $tester->execute(['--generate-new-key' => true]);
         $tester->assertCommandIsSuccessful();
+
+        preg_match('/Save the new key:[\s]+([0-9a-f]{64})/s', $tester->getDisplay(), $m);
+        $newMaster = $m[1];
+
+        $row = $this->em->getConnection()->fetchAssociative(
+            'SELECT encryption_key, master_encrypted FROM encryption_key WHERE id = ?',
+            [$orphanId],
+        );
+        $this->assertSame(1, (int) $row['master_encrypted']);
+        $this->assertNotSame($originalPlainKey, $row['encryption_key']);
+        // The new ciphertext must decrypt to the original plain key under the new master.
+        $newManager = new EncryptionManager($newMaster, $this->encryptionManager->getCipher());
+        $this->assertSame($originalPlainKey, $newManager->decryptWithMasterKey($row['encryption_key']));
     }
 }

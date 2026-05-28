@@ -4,7 +4,7 @@
                   xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
-    <entity name="Gebler\EncryptedFieldsBundle\Entity\EncryptionKey" repository-class="Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository">
+    <entity name="Gebler\EncryptedFieldsBundle\Entity\EncryptionKey" table="encryption_key" repository-class="Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository">
         <id name="id" type="bigint" column="id">
             <generator strategy="IDENTITY"/>
         </id>

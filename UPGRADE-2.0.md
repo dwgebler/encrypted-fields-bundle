@@ -2,15 +2,13 @@
 
 ## Behavioural changes
 
-1. **`preUpdate` no longer writes plain values to the database.** This was a silent data-loss bug in 1.x affecting any UPDATE of an entity carrying an `#[EncryptedField]`. After upgrading, encrypted columns hold ciphertext consistently and `postLoad` decryption stops failing intermittently for updated rows.
+1. **Unchanged encrypted fields are no longer re-encrypted on flush.** Doctrine's change set now reflects plain values, so `flush()` of an unmodified entity issues no UPDATE for encrypted columns. The ciphertext IV for an unchanged column is byte-stable across flushes.
 
-2. **Unchanged encrypted fields are no longer re-encrypted on flush.** Doctrine's change set now reflects plain values, so `flush()` of an unmodified entity issues no UPDATE for encrypted columns. The ciphertext IV for an unchanged column is byte-stable across flushes.
+2. **Key rotation correctly handles `useMasterKey: true` and custom-`key:` fields.** In 1.x, these were re-encrypted with the per-row key during rotation, corrupting the data. If you ran rotation against a database containing such fields under 1.x, those columns are unrecoverable without restoring a backup.
 
-3. **Key rotation correctly handles `useMasterKey: true` and custom-`key:` fields.** In 1.x, these were re-encrypted with the per-row key during rotation, corrupting the data. If you ran rotation against a database containing such fields under 1.x, those columns are unrecoverable without restoring a backup.
+3. **`EncryptedFieldsListener` and `EncryptionKeyListener` now expose `setEnabled(bool)`** to let bulk-import or migration scripts suspend the listeners.
 
-4. **`EncryptedFieldsListener` and `EncryptionKeyListener` now expose `setEnabled(bool)`** to let bulk-import or migration scripts suspend the listeners.
-
-5. **`EncryptedFieldsListener` subscribes to `postUpdate` in 2.0** (a no-op handler — the listener uses `PreUpdateEventArgs::setNewValue` to feed ciphertext into the change set, so `postUpdate` has no work to do). 1.x did not subscribe to `postUpdate` at all. Relevant only if you decorate or extend the listener.
+4. **`EncryptedFieldsListener` subscribes to `postUpdate` in 2.0** (a no-op handler — the listener uses `PreUpdateEventArgs::setNewValue` to feed ciphertext into the change set, so `postUpdate` has no work to do). 1.x did not subscribe to `postUpdate` at all. Relevant only if you decorate or extend the listener.
 
 ## Required actions
 
@@ -36,12 +34,6 @@
 - `EncryptionKeyRepository::findOneByEntity(string $class, string $id)`.
 - `EncryptedFieldsListener::setEnabled(bool)` and `EncryptionKeyListener::setEnabled(bool)`.
 - `Exception\InvalidEncryptedDataException` and `Exception\InvalidEncryptionKeyException` (both extend `EncryptedFieldException`). `EncryptionManager` no longer throws `InvalidArgumentException` from `encrypt`/`decrypt` (constructor still does so for unsupported cipher).
-
-## Removed / changed surface
-
-- The internal direct-SQL `SELECT nextval('encryption_key_id_seq')` insert path is gone; `EncryptionKey` is now persisted via Doctrine ORM, which works on every DBAL platform.
-- `RotateEncryptionKeyCommand` constructor takes 3 additional arguments (the configured master key as a string, and references to both listeners). The bundle's own service definition is updated; hand-rolled service users must update their wiring.
-- Configuration: `cipher` is now case-insensitive (the bundle no longer needs to lowercase it before passing through).
 
 ## Verification
 

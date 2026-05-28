@@ -3,31 +3,39 @@
 namespace Gebler\EncryptedFieldsBundle\Doctrine;
 
 use Doctrine\Common\Util\ClassUtils;
+use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\LoadClassMetadataEventArgs;
+use Doctrine\ORM\Event\PostLoadEventArgs;
+use Doctrine\ORM\Event\PostPersistEventArgs;
 use Doctrine\ORM\Event\PostUpdateEventArgs;
+use Doctrine\ORM\Event\PrePersistEventArgs;
+use Doctrine\ORM\Event\PreUpdateEventArgs;
 use Gebler\EncryptedFieldsBundle\Attribute\EncryptedField;
 use Gebler\EncryptedFieldsBundle\Entity\EncryptionKey;
 use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
-use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\Event\PostLoadEventArgs;
-use Doctrine\ORM\Event\PostPersistEventArgs;
-use Doctrine\ORM\Event\PrePersistEventArgs;
-use Doctrine\ORM\Event\PreUpdateEventArgs;
 use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
 class EncryptedFieldsListener
 {
-    private array $encryptionKeysToLink = [];
+    private bool $enabled = true;
+    /** @var \WeakMap<object, EncryptionKey> */
+    private \WeakMap $encryptionKeysToLink;
 
     public function __construct(
-        private EncryptedFieldsRepository $encryptedFieldsRepository,
-        private ParameterBagInterface $parameterBag,
-        private EntityManagerInterface $em,
-        private EncryptionManagerInterface $encryptionManager,
-        private EncryptionKeyRepository $encryptionKeyRepository,
+        private readonly EncryptedFieldsRepository $encryptedFieldsRepository,
+        private readonly ParameterBagInterface $parameterBag,
+        private readonly EntityManagerInterface $em,
+        private readonly EncryptionManagerInterface $encryptionManager,
+        private readonly EncryptionKeyRepository $encryptionKeyRepository,
     ) {
+        $this->encryptionKeysToLink = new \WeakMap();
+    }
+
+    public function setEnabled(bool $enabled): void
+    {
+        $this->enabled = $enabled;
     }
 
     public function loadClassMetadata(LoadClassMetadataEventArgs $args): void
@@ -35,219 +43,278 @@ class EncryptedFieldsListener
         $classMetadata = $args->getClassMetadata();
         $reflectionClass = $classMetadata->getReflectionClass();
         foreach ($reflectionClass->getProperties() as $property) {
-            $attribute = $property->getAttributes(EncryptedField::class);
-            if (empty($attribute)) {
+            $attributes = $property->getAttributes(EncryptedField::class);
+            if ($attributes === []) {
                 continue;
             }
-            $attribute = $attribute[0]->newInstance();
-            $options = [
-                'elements' => $attribute->elements,
-                'useMasterKey' => $attribute->useMasterKey,
-                'key' => $attribute->key,
-            ];
-            $this->encryptedFieldsRepository->addField($classMetadata->getName(), $property->getName(), $options);
+            $attribute = $attributes[0]->newInstance();
+            $this->encryptedFieldsRepository->addField(
+                $classMetadata->getName(),
+                $property->getName(),
+                [
+                    'elements'     => $attribute->elements,
+                    'useMasterKey' => $attribute->useMasterKey,
+                    'key'          => $attribute->key,
+                ]
+            );
+        }
+    }
+
+    public function prePersist(PrePersistEventArgs $args): void
+    {
+        if (!$this->enabled) {
+            return;
+        }
+        $entity = $args->getObject();
+        $fields = $this->fieldsFor($entity);
+        if ($fields === []) {
+            return;
+        }
+
+        $encryptionKey = $this->ensureEncryptionKeyForInsert($entity);
+        foreach ($fields as $field => $options) {
+            $plain = $this->readField($entity, $field);
+            if ($plain === null) {
+                continue;
+            }
+            $this->writeField($entity, $field, $this->encryptValue($plain, $options, $encryptionKey));
         }
     }
 
     public function postPersist(PostPersistEventArgs $args): void
     {
+        if (!$this->enabled) {
+            return;
+        }
         $entity = $args->getObject();
-        $this->persistEncryptionKey($entity);
-        $this->decryptFields($entity);
-    }
-
-    private function persistEncryptionKey(object $entity): void
-    {
-        $realClass = ClassUtils::getClass($entity);
-        $classMetadata = $this->em->getClassMetadata($realClass);
-        $identifierField = $classMetadata->getIdentifierFieldNames()[0];
-        $entityId = $classMetadata->getFieldValue($entity, $identifierField);
-
-        if (isset($this->encryptionKeysToLink[spl_object_hash($entity)])) {
-            /** @var EncryptionKey $encryptionKey */
-            $encryptionKey = $this->encryptionKeysToLink[spl_object_hash($entity)];
-            if ($encryptionKey->getKey() === null) {
-                $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
-            }
-            $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
-            $encryptionKey->setMasterEncrypted(true);
-            $encryptionKey->setEntityId($entityId);
-            $connection = $this->em->getConnection();
-            $nextId = $connection->fetchOne('SELECT nextval(\'encryption_key_id_seq\')');
-            $connection->insert('encryption_key', [
-                'id' => $nextId,
-                'entity_id' => $encryptionKey->getEntityId(),
-                'entity_class' => $encryptionKey->getEntityClass(),
-                'key' => $encryptionKey->getKey(),
-            ]);
-            unset($this->encryptionKeysToLink[spl_object_hash($entity)]);
+        $fields = $this->fieldsFor($entity);
+        if ($fields === []) {
+            return;
         }
 
-    }
+        if (isset($this->encryptionKeysToLink[$entity])) {
+            $encryptionKey = $this->encryptionKeysToLink[$entity];
+            $encryptionKey->setEntityId($this->identifierFor($entity) ?? '');
+            // EncryptionKeyListener::prePersist mutates the in-memory key to its
+            // master-encrypted form during flush. Capture the plain hex value
+            // beforehand so we can still decrypt this entity's fields below.
+            $plainKey = $encryptionKey->getKey();
+            $this->em->persist($encryptionKey);
+            $this->em->flush($encryptionKey);
+            unset($this->encryptionKeysToLink[$entity]);
+            $decryptionKey = new EncryptionKey();
+            $decryptionKey->setMasterEncrypted(false);
+            $decryptionKey->setEntityClass($encryptionKey->getEntityClass());
+            $decryptionKey->setEntityId($encryptionKey->getEntityId());
+            $decryptionKey->setKey($plainKey);
+        } else {
+            $decryptionKey = $this->loadEncryptionKey($entity);
+        }
 
-    public function postUpdate(PostUpdateEventArgs $args): void
-    {
-        $entity = $args->getObject();
-        $this->decryptFields($entity);
-    }
+        if ($decryptionKey === null) {
+            $this->snapshotPlainValues($entity, $fields);
+            return;
+        }
 
-    public function prePersist(PrePersistEventArgs $args): void
-    {
-        $entity = $args->getObject();
-        $this->encryptFields($entity);
+        foreach ($fields as $field => $options) {
+            $cipher = $this->readField($entity, $field);
+            if ($cipher === null) {
+                continue;
+            }
+            $plain = $this->decryptValue($cipher, $options, $decryptionKey);
+            $this->writeField($entity, $field, $plain);
+        }
+        $this->snapshotPlainValues($entity, $fields);
     }
 
     public function preUpdate(PreUpdateEventArgs $args): void
     {
+        if (!$this->enabled) {
+            return;
+        }
         $entity = $args->getObject();
-        $this->encryptFields($entity);
-        $this->persistEncryptionKey($entity);
+        $fields = $this->fieldsFor($entity);
+        if ($fields === []) {
+            return;
+        }
+
+        $encryptionKey = $this->loadEncryptionKey($entity);
+        if ($encryptionKey === null) {
+            // Edge case: an entity that exists but has no EncryptionKey row
+            // (e.g. annotated field added after rows were created). Build one.
+            $encryptionKey = $this->ensureEncryptionKeyForInsert($entity);
+        }
+
+        foreach ($fields as $field => $options) {
+            if (!$args->hasChangedField($field)) {
+                continue;
+            }
+            $newValue = $args->getNewValue($field);
+            if ($newValue === null) {
+                continue;
+            }
+            $ciphertext = $this->encryptValue($newValue, $options, $encryptionKey);
+            $args->setNewValue($field, $ciphertext);
+            $this->em->getUnitOfWork()->setOriginalEntityProperty(
+                spl_object_id($entity), $field, $newValue
+            );
+        }
+    }
+
+    public function postUpdate(PostUpdateEventArgs $args): void
+    {
+        // Entity properties stayed plain throughout the update — we used
+        // PreUpdateEventArgs::setNewValue to feed ciphertext into the change
+        // set without touching the entity. Nothing to undo.
     }
 
     public function postLoad(PostLoadEventArgs $args): void
     {
+        if (!$this->enabled) {
+            return;
+        }
         $entity = $args->getObject();
-        $this->decryptFields($entity);
-    }
-
-    private function decryptFields(object $entity, ?EncryptionKey $encryptionKey = null): void
-    {
-        $realClass = ClassUtils::getClass($entity);
-        $fields = $this->encryptedFieldsRepository->getFields($realClass);
-
-        if (empty($fields)) {
+        $fields = $this->fieldsFor($entity);
+        if ($fields === []) {
             return;
         }
-
-        $classMetadata = $this->em->getClassMetadata($realClass);
-        $identifierField = $classMetadata->getIdentifierFieldNames()[0];
-        $entityId = $classMetadata->getFieldValue($entity, $identifierField);
-
-        $encryptionKey ??= $this->encryptionKeyRepository->findOneBy([
-            'entityId' => $entityId,
-            'entityClass' => $realClass,
-        ]);
-
-        if (!$encryptionKey) {
+        $encryptionKey = $this->loadEncryptionKey($entity);
+        if ($encryptionKey === null) {
+            $this->snapshotPlainValues($entity, $fields);
             return;
-        }
-
-        $this->em->detach($encryptionKey);
-
-        if ($encryptionKey->isMasterEncrypted()) {
-            $encryptionKey->setKey($this->encryptionManager->decryptWithMasterKey($encryptionKey->getKey()));
-            $encryptionKey->setMasterEncrypted(false);
         }
 
         foreach ($fields as $field => $options) {
-            if (isset($options['key'])) {
-                $options['key'] = $this->parameterBag->resolveValue($options['key']);
-            }
-            $key = $options['key'] ?? null;
-            $useMasterKey = $options['useMasterKey'] ?? false;
-            $elements = $options['elements'] ?? null;
-            $fieldValue = $entity->{'get' . $field}();
-            if ($fieldValue === null) {
+            $cipher = $this->readField($entity, $field);
+            if ($cipher === null) {
                 continue;
             }
-            if (is_array($fieldValue) && $elements !== null) {
-                foreach ($elements as $element) {
-                    $value = $fieldValue[$element] ?? null;
-                    if ($value === null) {
-                        continue;
-                    }
-                    if ($useMasterKey) {
-                        $fieldValue[$element] = $this->encryptionManager->decryptWithMasterKey($value);
-                    } elseif ($key) {
-                        $fieldValue[$element] = $this->encryptionManager->decrypt($value, $key);
-                    } else {
-                        $fieldValue[$element] = $this->encryptionManager->decrypt($value, $encryptionKey->getKey());
-                    }
-                }
-                $entity->{'set' . $field}($fieldValue);
-                continue;
-            }
-            if ($useMasterKey) {
-                $fieldValue = $this->encryptionManager->decryptWithMasterKey($fieldValue);
-            } elseif ($key) {
-                $fieldValue = $this->encryptionManager->decrypt($fieldValue, $key);
-            } else {
-                $fieldValue = $this->encryptionManager->decrypt($fieldValue, $encryptionKey->getKey());
-            }
-            $entity->{'set' . $field}($fieldValue);
+            $this->writeField($entity, $field, $this->decryptValue($cipher, $options, $encryptionKey));
+        }
+        $this->snapshotPlainValues($entity, $fields);
+    }
+
+    // ---------- helpers ----------
+
+    /** @return array<string, array<string, mixed>> */
+    private function fieldsFor(object $entity): array
+    {
+        return $this->encryptedFieldsRepository->getFields(ClassUtils::getClass($entity));
+    }
+
+    private function identifierFor(object $entity): ?string
+    {
+        $meta = $this->em->getClassMetadata(ClassUtils::getClass($entity));
+        $ids = $meta->getIdentifierValues($entity);
+        if ($ids === [] || in_array(null, $ids, true)) {
+            return null;
+        }
+        ksort($ids);
+        return implode("\x1f", array_map(static fn($v): string => (string) $v, $ids));
+    }
+
+    private function loadEncryptionKey(object $entity): ?EncryptionKey
+    {
+        $id = $this->identifierFor($entity);
+        if ($id === null) {
+            return null;
+        }
+        return $this->encryptionKeyRepository->findOneByEntity(ClassUtils::getClass($entity), $id);
+    }
+
+    private function ensureEncryptionKeyForInsert(object $entity): EncryptionKey
+    {
+        if (isset($this->encryptionKeysToLink[$entity])) {
+            return $this->encryptionKeysToLink[$entity];
+        }
+        $encryptionKey = new EncryptionKey();
+        $encryptionKey->setEntityClass(ClassUtils::getClass($entity));
+        $encryptionKey->setMasterEncrypted(false);
+        $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
+        $this->encryptionKeysToLink[$entity] = $encryptionKey;
+        return $encryptionKey;
+    }
+
+    /** @param array<string, array<string, mixed>> $fields */
+    private function snapshotPlainValues(object $entity, array $fields): void
+    {
+        $uow = $this->em->getUnitOfWork();
+        $oid = spl_object_id($entity);
+        foreach ($fields as $field => $_options) {
+            $uow->setOriginalEntityProperty($oid, $field, $this->readField($entity, $field));
         }
     }
 
-    private function encryptFields(object $entity): void
+    private function readField(object $entity, string $field): mixed
     {
-        $realClass = ClassUtils::getClass($entity);
-        $fields = $this->encryptedFieldsRepository->getFields($realClass);
+        $getter = 'get' . $field;
+        return $entity->{$getter}();
+    }
 
-        if (empty($fields)) {
-            return;
-        }
+    private function writeField(object $entity, string $field, mixed $value): void
+    {
+        $setter = 'set' . $field;
+        $entity->{$setter}($value);
+    }
 
-        $classMetadata = $this->em->getClassMetadata($realClass);
-        $identifierField = $classMetadata->getIdentifierFieldNames()[0];
-        $entityId = $classMetadata->getFieldValue($entity, $identifierField);
-
-        $encryptionKey = $entityId ? $this->encryptionKeyRepository->findOneBy([
-            'entityId' => $entityId,
-            'entityClass' => $realClass,
-        ]) : null;
-
-        if ($encryptionKey) {
-            $this->em->detach($encryptionKey);
-        }
-
-        foreach ($fields as $field => $options) {
-            if (isset($options['key'])) {
-                $options['key'] = $this->parameterBag->resolveValue($options['key']);
-            }
-            $key = $options['key'] ?? null;
-            $useMasterKey = $options['useMasterKey'] ?? false;
-            $elements = $options['elements'] ?? null;
-            $fieldValue = $entity->{'get' . $field}();
-            if ($fieldValue === null) {
-                continue;
-            }
-
-            if (!$key && !$encryptionKey) {
-                $encryptionKey = new EncryptionKey();
-                $encryptionKey->setMasterEncrypted(false);
-                $encryptionKey->setEntityClass($realClass);
-                $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
-                if ($entityId) {
-                    $encryptionKey->setEntityId($entityId);
+    /** @param array<string, mixed> $options */
+    private function encryptValue(mixed $value, array $options, EncryptionKey $encryptionKey): mixed
+    {
+        $elements = $options['elements'] ?? null;
+        if (is_array($value) && $elements !== null) {
+            foreach ($elements as $element) {
+                if (!array_key_exists($element, $value) || $value[$element] === null) {
+                    continue;
                 }
-                $this->encryptionKeysToLink[spl_object_hash($entity)] = $encryptionKey;
+                $value[$element] = $this->encryptScalar((string) $value[$element], $options, $encryptionKey);
             }
-
-            if (is_array($fieldValue) && $elements !== null) {
-                foreach ($elements as $element) {
-                    $value = $fieldValue[$element] ?? null;
-                    if ($value === null) {
-                        continue;
-                    }
-                    if ($useMasterKey) {
-                        $fieldValue[$element] = $this->encryptionManager->encryptWithMasterKey($value);
-                    } elseif ($key) {
-                        $fieldValue[$element] = $this->encryptionManager->encrypt($value, $key);
-                    } else {
-                        $fieldValue[$element] = $this->encryptionManager->encrypt($value, $encryptionKey->getKey());
-                    }
-                }
-                $entity->{'set' . $field}($fieldValue);
-                continue;
-            }
-            if ($useMasterKey) {
-                $fieldValue = $this->encryptionManager->encryptWithMasterKey($fieldValue);
-            } elseif ($key) {
-                $fieldValue = $this->encryptionManager->encrypt($fieldValue, $key);
-            } else {
-                $fieldValue = $this->encryptionManager->encrypt($fieldValue, $encryptionKey->getKey());
-            }
-            $entity->{'set' . $field}($fieldValue);
+            return $value;
         }
+        return $this->encryptScalar((string) $value, $options, $encryptionKey);
+    }
+
+    /** @param array<string, mixed> $options */
+    private function decryptValue(mixed $value, array $options, EncryptionKey $encryptionKey): mixed
+    {
+        $elements = $options['elements'] ?? null;
+        if (is_array($value) && $elements !== null) {
+            foreach ($elements as $element) {
+                if (!array_key_exists($element, $value) || $value[$element] === null) {
+                    continue;
+                }
+                $value[$element] = $this->decryptScalar((string) $value[$element], $options, $encryptionKey);
+            }
+            return $value;
+        }
+        return $this->decryptScalar((string) $value, $options, $encryptionKey);
+    }
+
+    /** @param array<string, mixed> $options */
+    private function encryptScalar(string $value, array $options, EncryptionKey $encryptionKey): string
+    {
+        if ($options['useMasterKey'] ?? false) {
+            return $this->encryptionManager->encryptWithMasterKey($value);
+        }
+        if (($options['key'] ?? null) !== null) {
+            return $this->encryptionManager->encrypt($value, $this->resolveCustomKey($options['key']));
+        }
+        return $this->encryptionManager->encrypt($value, $encryptionKey->getKey());
+    }
+
+    /** @param array<string, mixed> $options */
+    private function decryptScalar(string $value, array $options, EncryptionKey $encryptionKey): string
+    {
+        if ($options['useMasterKey'] ?? false) {
+            return $this->encryptionManager->decryptWithMasterKey($value);
+        }
+        if (($options['key'] ?? null) !== null) {
+            return $this->encryptionManager->decrypt($value, $this->resolveCustomKey($options['key']));
+        }
+        return $this->encryptionManager->decrypt($value, $encryptionKey->getKey());
+    }
+
+    private function resolveCustomKey(string $keyOrParam): string
+    {
+        return (string) $this->parameterBag->resolveValue($keyOrParam);
     }
 }

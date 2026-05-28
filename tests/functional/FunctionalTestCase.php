@@ -95,6 +95,31 @@ abstract class FunctionalTestCase extends TestCase
             'memory' => true,
         ], $config);
 
+        // Lazy holder lets us register the repository factory before the
+        // EntityManager is constructed (it caches Configuration::getRepositoryFactory
+        // at construction time), even though the EncryptionKeyRepository itself
+        // can only be built after the EM exists (it needs the ManagerRegistry
+        // adapter which wraps the EM).
+        $keyRepoHolder = new \stdClass();
+        $keyRepoHolder->repo = null;
+
+        $config->setRepositoryFactory(new class($keyRepoHolder) implements \Doctrine\ORM\Repository\RepositoryFactory {
+            private \Doctrine\ORM\Repository\DefaultRepositoryFactory $default;
+
+            public function __construct(private \stdClass $holder)
+            {
+                $this->default = new \Doctrine\ORM\Repository\DefaultRepositoryFactory();
+            }
+
+            public function getRepository(EntityManagerInterface $entityManager, string $entityName): \Doctrine\ORM\EntityRepository
+            {
+                if ($entityName === EncryptionKey::class && $this->holder->repo !== null) {
+                    return $this->holder->repo;
+                }
+                return $this->default->getRepository($entityManager, $entityName);
+            }
+        });
+
         $this->em = new EntityManager($connection, $config);
 
         $schemaTool = new SchemaTool($this->em);
@@ -119,6 +144,7 @@ abstract class FunctionalTestCase extends TestCase
         );
 
         $this->keyRepo = $keyRepo;
+        $keyRepoHolder->repo = $keyRepo;
 
         $this->listener = new EncryptedFieldsListener(
             $this->fieldsRepository,

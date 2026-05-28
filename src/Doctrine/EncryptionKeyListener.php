@@ -7,38 +7,51 @@ use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
 
 class EncryptionKeyListener
 {
-    public function __construct(private EncryptionManagerInterface $encryptionManager)
+    private bool $enabled = true;
+
+    public function __construct(private readonly EncryptionManagerInterface $encryptionManager)
     {
     }
 
-    private function preSave(EncryptionKey $encryptionKey): void
+    public function setEnabled(bool $enabled): void
     {
-        if ($encryptionKey->getKey() === null) {
-            $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
-            $encryptionKey->setMasterEncrypted(false);
-        }
-        if (!$encryptionKey->isMasterEncrypted()) {
-            $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
-            $encryptionKey->setMasterEncrypted(true);
-        }
+        $this->enabled = $enabled;
     }
 
     public function prePersist(EncryptionKey $encryptionKey): void
     {
-        $this->preSave($encryptionKey);
+        if (!$this->enabled) {
+            return;
+        }
+        $this->masterEncryptIfNeeded($encryptionKey);
     }
 
     public function preUpdate(EncryptionKey $encryptionKey): void
     {
-        $this->preSave($encryptionKey);
+        if (!$this->enabled) {
+            return;
+        }
+        $this->masterEncryptIfNeeded($encryptionKey);
     }
 
     public function postLoad(EncryptionKey $encryptionKey): void
     {
+        if (!$this->enabled) {
+            return;
+        }
         if (!$encryptionKey->isMasterEncrypted()) {
             return;
         }
         $encryptionKey->setKey($this->encryptionManager->decryptWithMasterKey($encryptionKey->getKey()));
         $encryptionKey->setMasterEncrypted(false);
+    }
+
+    private function masterEncryptIfNeeded(EncryptionKey $encryptionKey): void
+    {
+        if ($encryptionKey->isMasterEncrypted()) {
+            return;
+        }
+        $encryptionKey->setKey($this->encryptionManager->encryptWithMasterKey($encryptionKey->getKey()));
+        $encryptionKey->setMasterEncrypted(true);
     }
 }

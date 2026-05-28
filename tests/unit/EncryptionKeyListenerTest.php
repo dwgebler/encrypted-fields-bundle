@@ -18,69 +18,86 @@ class EncryptionKeyListenerTest extends TestCase
         $this->listener = new EncryptionKeyListener($this->encryptionManager);
     }
 
-    public function testPrePersistSetsKeyAndEncryptsWithMasterKey(): void
+    public function testPrePersistOnAlreadyMasterEncryptedIsNoop(): void
     {
-        $encryptionKey = new EncryptionKey();
-        $this->encryptionManager->expects($this->once())
-            ->method('createEncryptionKey')
-            ->willReturn('generated-key');
-        $this->encryptionManager->expects($this->once())
-            ->method('encryptWithMasterKey')
-            ->with('generated-key')
-            ->willReturn('encrypted-key');
-
-        $this->listener->prePersist($encryptionKey);
-
-        $this->assertEquals('encrypted-key', $encryptionKey->getKey());
-        $this->assertTrue($encryptionKey->isMasterEncrypted());
+        $k = new EncryptionKey();
+        $k->setKey('already-encrypted');
+        $k->setMasterEncrypted(true);
+        $this->encryptionManager->expects($this->never())->method('encryptWithMasterKey');
+        $this->listener->prePersist($k);
+        $this->assertSame('already-encrypted', $k->getKey());
     }
 
-    public function testPreUpdateSetsKeyAndEncryptsWithMasterKey(): void
+    public function testPrePersistEncryptsPlainKey(): void
     {
-        $encryptionKey = new EncryptionKey();
+        $k = new EncryptionKey();
+        $k->setKey('plain');
+        $k->setMasterEncrypted(false);
         $this->encryptionManager->expects($this->once())
-            ->method('createEncryptionKey')
-            ->willReturn('generated-key');
-        $this->encryptionManager->expects($this->once())
-            ->method('encryptWithMasterKey')
-            ->with('generated-key')
-            ->willReturn('encrypted-key');
-
-        $this->listener->preUpdate($encryptionKey);
-
-        $this->assertEquals('encrypted-key', $encryptionKey->getKey());
-        $this->assertTrue($encryptionKey->isMasterEncrypted());
+            ->method('encryptWithMasterKey')->with('plain')->willReturn('enc');
+        $this->listener->prePersist($k);
+        $this->assertSame('enc', $k->getKey());
+        $this->assertTrue($k->isMasterEncrypted());
     }
 
-    public function testPostLoadDecryptsKeyWithMasterKey(): void
+    public function testPreUpdateOnAlreadyMasterEncryptedIsNoop(): void
     {
-        $encryptionKey = new EncryptionKey();
-        $encryptionKey->setKey('encrypted-key');
-        $encryptionKey->setMasterEncrypted(true);
+        $k = new EncryptionKey();
+        $k->setKey('already-encrypted');
+        $k->setMasterEncrypted(true);
+        $this->encryptionManager->expects($this->never())->method('encryptWithMasterKey');
+        $this->listener->preUpdate($k);
+        $this->assertSame('already-encrypted', $k->getKey());
+    }
 
+    public function testPreUpdateEncryptsPlainKey(): void
+    {
+        $k = new EncryptionKey();
+        $k->setKey('plain');
+        $k->setMasterEncrypted(false);
         $this->encryptionManager->expects($this->once())
-            ->method('decryptWithMasterKey')
-            ->with('encrypted-key')
-            ->willReturn('decrypted-key');
+            ->method('encryptWithMasterKey')->with('plain')->willReturn('enc');
+        $this->listener->preUpdate($k);
+        $this->assertSame('enc', $k->getKey());
+        $this->assertTrue($k->isMasterEncrypted());
+    }
 
-        $this->listener->postLoad($encryptionKey);
-
-        $this->assertEquals('decrypted-key', $encryptionKey->getKey());
-        $this->assertFalse($encryptionKey->isMasterEncrypted());
+    public function testPostLoadDecryptsWhenMasterEncrypted(): void
+    {
+        $k = new EncryptionKey();
+        $k->setKey('enc');
+        $k->setMasterEncrypted(true);
+        $this->encryptionManager->expects($this->once())
+            ->method('decryptWithMasterKey')->with('enc')->willReturn('plain');
+        $this->listener->postLoad($k);
+        $this->assertSame('plain', $k->getKey());
+        $this->assertFalse($k->isMasterEncrypted());
     }
 
     public function testPostLoadDoesNothingIfNotMasterEncrypted(): void
     {
-        $encryptionKey = new EncryptionKey();
-        $encryptionKey->setKey('plain-key');
-        $encryptionKey->setMasterEncrypted(false);
+        $k = new EncryptionKey();
+        $k->setKey('plain-key');
+        $k->setMasterEncrypted(false);
+        $this->encryptionManager->expects($this->never())->method('decryptWithMasterKey');
+        $this->listener->postLoad($k);
+        $this->assertSame('plain-key', $k->getKey());
+        $this->assertFalse($k->isMasterEncrypted());
+    }
 
-        $this->encryptionManager->expects($this->never())
-            ->method('decryptWithMasterKey');
+    public function testSetEnabledFalseSuppressesAllEvents(): void
+    {
+        $k = new EncryptionKey();
+        $k->setKey('plain');
+        $k->setMasterEncrypted(false);
+        $this->encryptionManager->expects($this->never())->method('encryptWithMasterKey');
+        $this->encryptionManager->expects($this->never())->method('decryptWithMasterKey');
 
-        $this->listener->postLoad($encryptionKey);
+        $this->listener->setEnabled(false);
+        $this->listener->prePersist($k);
+        $this->listener->preUpdate($k);
+        $this->listener->postLoad($k);
 
-        $this->assertEquals('plain-key', $encryptionKey->getKey());
-        $this->assertFalse($encryptionKey->isMasterEncrypted());
+        $this->assertSame('plain', $k->getKey());
     }
 }

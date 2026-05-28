@@ -1,5 +1,13 @@
 # Encrypted Fields Bundle
 
+## Version 2.0
+
+Version 2.0 fixes a silent data-loss bug in `preUpdate` that affected 1.x, skips unnecessary
+re-encryption of unchanged values, fixes key rotation for `useMasterKey` and custom-`key:` fields,
+and supports UUID and composite primary keys.
+
+If upgrading from 1.x, see [UPGRADE-2.0.md](UPGRADE-2.0.md).
+
 This bundle provides a way to encrypt and decrypt fields in your Doctrine entities with a simple attribute.
 
 You provide a single master key in your configuration and the bundle will generate a unique key for each row

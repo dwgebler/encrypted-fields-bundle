@@ -4,6 +4,7 @@ namespace Gebler\EncryptedFieldsBundle;
 
 use Doctrine\Bundle\DoctrineBundle\DependencyInjection\Compiler\DoctrineOrmMappingsPass;
 use Doctrine\Persistence\ManagerRegistry;
+use Gebler\EncryptedFieldsBundle\Command\MigrateSchemaV2Command;
 use Gebler\EncryptedFieldsBundle\Command\RotateEncryptionKeyCommand;
 use Gebler\EncryptedFieldsBundle\Doctrine\EncryptedFieldsListener;
 use Gebler\EncryptedFieldsBundle\Doctrine\EncryptionKeyListener;
@@ -75,6 +76,11 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->tag('doctrine.orm.entity_listener', ['entity' => EncryptionKey::class, 'event' => 'postLoad'])
             ->tag('container.service_arguments');
         $container->parameters()->set('gebler.encrypted_fields.master_key', $config['master_key']);
+
+        $container->services()
+            ->set('gebler.encrypted_fields.migrate_schema_v2_command', MigrateSchemaV2Command::class)
+            ->args([new Reference('doctrine.dbal.default_connection')])
+            ->tag('console.command');
 
         $container->services()
             ->set('gebler.encrypted_fields.rotate_keys_command', RotateEncryptionKeyCommand::class)

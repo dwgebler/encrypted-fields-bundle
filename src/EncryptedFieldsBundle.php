@@ -41,7 +41,7 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->set('gebler.encrypted_fields.encryption_manager', EncryptionManager::class)
             ->args([
                 '$masterKey' => $config['master_key'],
-                '$cipher' => strtolower($config['cipher']),
+                '$cipher' => $config['cipher'],
             ])
             ->tag('container.service_arguments');
         $container->services()
@@ -74,6 +74,8 @@ class EncryptedFieldsBundle extends AbstractBundle
             ->tag('doctrine.orm.entity_listener', ['entity' => EncryptionKey::class, 'event' => 'preUpdate'])
             ->tag('doctrine.orm.entity_listener', ['entity' => EncryptionKey::class, 'event' => 'postLoad'])
             ->tag('container.service_arguments');
+        $container->parameters()->set('gebler.encrypted_fields.master_key', $config['master_key']);
+
         $container->services()
             ->set('gebler.encrypted_fields.rotate_keys_command', RotateEncryptionKeyCommand::class)
             ->args([
@@ -82,6 +84,9 @@ class EncryptedFieldsBundle extends AbstractBundle
                 new Reference('gebler.encrypted_fields.repository'),
                 new Reference('doctrine.orm.default_entity_manager'),
                 new Reference('parameter_bag'),
+                '%gebler.encrypted_fields.master_key%',
+                new Reference('gebler.encrypted_fields.doctrine_listener'),
+                new Reference('gebler.encrypted_fields.encryption_key_entity_listener'),
             ])
             ->tag('console.command');
     }

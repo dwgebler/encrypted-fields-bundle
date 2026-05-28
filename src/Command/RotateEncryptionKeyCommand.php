@@ -2,11 +2,15 @@
 
 namespace Gebler\EncryptedFieldsBundle\Command;
 
+use Doctrine\ORM\EntityManagerInterface;
+use Gebler\EncryptedFieldsBundle\Doctrine\EncryptedFieldsListener;
+use Gebler\EncryptedFieldsBundle\Doctrine\EncryptionKeyListener;
 use Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository;
 use Gebler\EncryptedFieldsBundle\Service\EncryptedFieldsRepository;
+use Gebler\EncryptedFieldsBundle\Service\EncryptionManager;
 use Gebler\EncryptedFieldsBundle\Service\EncryptionManagerInterface;
-use Doctrine\ORM\EntityManagerInterface;
-use Symfony\Component\Console\Attribute\AsCommand;use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -19,216 +23,180 @@ use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 )]
 class RotateEncryptionKeyCommand extends Command
 {
+    private const DEFAULT_BATCH_SIZE = 50;
+
     public function __construct(
-        private EncryptionManagerInterface $encryptionManager,
-        private EncryptionKeyRepository $encryptionKeyRepository,
-        private EncryptedFieldsRepository $encryptedFieldsRepository,
-        private EntityManagerInterface $em,
-        private ParameterBagInterface $parameterBag,
+        private readonly EncryptionManagerInterface $encryptionManager,
+        private readonly EncryptionKeyRepository $encryptionKeyRepository,
+        private readonly EncryptedFieldsRepository $encryptedFieldsRepository,
+        private readonly EntityManagerInterface $em,
+        private readonly ParameterBagInterface $parameterBag,
+        private readonly string $configuredMasterKey,
+        private readonly EncryptedFieldsListener $fieldsListener,
+        private readonly EncryptionKeyListener $keyListener,
     ) {
         parent::__construct();
     }
 
-    #[\Override]
     protected function configure(): void
     {
-        $help = <<<'EOT'
-The <info>%command.name%</info> command rotates entity encryption keys.
-
-This command can be used to either decrypt all data with the existing master key and re-encrypt with a new master key,
-or to decrypt all data with a provided master key and re-encrypt with either the existing master key or a new key.
-
-The latter option is useful if you have taken a copy of a database and want to re-encode its encrypted fields with an
-existing master key, or if you have a new master key and want to re-encode the data with that key.
-
-If you provide a database key, the command will decrypt all data with that key and re-encrypt with either the existing
-master key or a new key, depending on whether the <info>--generate-new-key</info> option is set.
-
-If you do not provide a database key, the command will decrypt all data with the existing master key and re-encrypt with
-a new master key, which will be output at the end.
-
-TLDR; data in database doesn't match your configured application master key; run this command with either the 
-<info>--database-key</info> option or the <info>--database-key-file</info> option to re-encrypt the data with the correct key.
-
-Data in database matches your configured application master key, but you want to change it; run this command with the
-<info>--generate-new-key</info> option to re-encrypt the data with a new key.
-EOT;
-
         $this
             ->addOption('database-key', 'k', InputOption::VALUE_OPTIONAL, 'Key for data in the database')
             ->addOption('database-key-file', 'f', InputOption::VALUE_OPTIONAL, 'Path to key for data in database')
-            ->addOption('generate-new-key', 'g', InputOption::VALUE_NONE, 'Generate a new key and output it at the end')
-            ->setHelp($help)
-        ;
+            ->addOption('generate-new-key', 'g', InputOption::VALUE_NONE, 'Generate a new master key and output it')
+            ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'Flush/clear every N rows', (string) self::DEFAULT_BATCH_SIZE);
     }
 
-    #[\Override]
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $dbKey = null;
-        $generateNewKey = false;
 
-        if ($input->getOption('database-key')) {
-            $dbKey = $input->getOption('database-key');
-        }
-
+        $dbKey = $input->getOption('database-key');
         if ($input->getOption('database-key-file')) {
-            if (!is_readable($input->getOption('database-key-file'))) {
+            $path = (string) $input->getOption('database-key-file');
+            if (!is_readable($path)) {
                 $io->error('Database key file is not readable.');
                 return Command::FAILURE;
             }
-            $dbKey = file_get_contents($input->getOption('database-key-file'));
+            $dbKey = file_get_contents($path);
         }
-
-        if ($input->getOption('generate-new-key')) {
-            $generateNewKey = true;
-        }
+        $generateNewKey = (bool) $input->getOption('generate-new-key');
+        $batchSize = max(1, (int) $input->getOption('batch-size'));
 
         if ($dbKey === null && !$generateNewKey) {
             $io->error('No database key provided and not generating a new key.');
             return Command::FAILURE;
         }
 
-        $eventManager = $this->em->getEventManager();
-        $listeners = $eventManager->getAllListeners();
+        $oldMasterKey = $dbKey ?? $this->configuredMasterKey;
+        $newMasterKey = $generateNewKey ? $this->encryptionManager->createEncryptionKey() : $this->configuredMasterKey;
+        $cipher = $this->encryptionManager->getCipher();
+        $oldMasterManager = new EncryptionManager($oldMasterKey, $cipher);
+        $newMasterManager = new EncryptionManager($newMasterKey, $cipher);
 
-        foreach ($listeners as $eventName => $eventListeners) {
-            foreach ($eventListeners as $listener) {
-                $eventManager->removeEventListener($eventName, $listener);
-            }
-        }
-
+        $this->fieldsListener->setEnabled(false);
+        $this->keyListener->setEnabled(false);
         $this->em->getConnection()->beginTransaction();
         try {
-            if ($dbKey === null) {
-                $newKey = $this->rotateWithNewKey();
-            } else {
-                $newKey = $this->rotateWithExistingKey($dbKey, $generateNewKey);
-            }
+            $this->rotate($oldMasterManager, $newMasterManager, $batchSize);
             $this->em->getConnection()->commit();
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->em->getConnection()->rollBack();
-            $io->error('An error occurred while rotating encryption keys: ' . $e->getMessage());
-            $io->error('All changes have been rolled back.');
+            $io->error('Rotation failed: ' . $e->getMessage());
             return Command::FAILURE;
+        } finally {
+            $this->fieldsListener->setEnabled(true);
+            $this->keyListener->setEnabled(true);
         }
 
         $io->success('Encryption keys have been rotated.');
-
-        if ($newKey) {
-            $io->success('Save the new key: ' . $newKey);
+        if ($generateNewKey) {
+            $io->success('Save the new key: ' . $newMasterKey);
         }
-
         return Command::SUCCESS;
     }
 
-    private function rotateWithNewKey(): ?string
+    private function rotate(EncryptionManager $oldMaster, EncryptionManager $newMaster, int $batchSize): void
     {
-        $newMasterKey = $this->encryptionManager->createEncryptionKey();
-        $encryptedEntities = $this->encryptionKeyRepository->findAll();
+        $rows = $this->encryptionKeyRepository->findAll();
+        $count = 0;
 
-        foreach ($encryptedEntities as $encryptedEntity) {
-            $entityKey = $this->encryptionManager->decryptWithMasterKey($encryptedEntity->getKey());
-            $fields = $this->encryptedFieldsRepository->getFields($encryptedEntity->getEntityClass());
-            $entity = $this->em->getRepository($encryptedEntity->getEntityClass())->find($encryptedEntity->getEntityId());
-            if (!$entity) {
+        foreach ($rows as $keyRow) {
+            // Listeners are disabled, so postLoad did not decrypt the key column.
+            $entityKeyPlain = $keyRow->isMasterEncrypted()
+                ? $oldMaster->decryptWithMasterKey($keyRow->getKey())
+                : $keyRow->getKey();
+
+            $entity = $this->em->getRepository($keyRow->getEntityClass())
+                ->find($keyRow->getEntityId());
+            if ($entity === null) {
+                // Orphan row — preserve it under the new master so it remains
+                // decryptable if the host entity is recreated, but skip the
+                // per-field pass (there's no entity to rotate fields on).
+                $keyRow->setKey($newMaster->encryptWithMasterKey($entityKeyPlain));
+                $keyRow->setMasterEncrypted(true);
+                $this->flushIfBatch(++$count, $batchSize);
                 continue;
             }
-            $newRecordKey = $this->encryptionManager->createEncryptionKey();
+
+            $newEntityKeyPlain = $oldMaster->createEncryptionKey();
+            $fields = $this->encryptedFieldsRepository->getFields($keyRow->getEntityClass());
             foreach ($fields as $field => $options) {
-                if (isset($options['key'])) {
-                    $options['key'] = $this->parameterBag->resolveValue($options['key']);
-                }
-                $key = $options['key'] ?? $entityKey;
-                $useMasterKey = $options['useMasterKey'] ?? false;
-                $elements = $options['elements'] ?? null;
-                $fieldValue = $entity->{'get' . $field}();
-                if ($fieldValue === null) {
+                $value = $entity->{'get' . $field}();
+                if ($value === null) {
                     continue;
                 }
-                if (is_array($fieldValue) && $elements !== null) {
-                    foreach ($elements as $element) {
-                        $value = $fieldValue[$element] ?? null;
-                        if ($value === null) {
-                            continue;
-                        }
-                        if ($useMasterKey) {
-                            $fieldValue[$element] = $this->encryptionManager->decryptWithMasterKey($value);
-                        } else {
-                            $fieldValue[$element] = $this->encryptionManager->decrypt($value, $key);
-                        }
-                        $fieldValue[$element] = $this->encryptionManager->encrypt($fieldValue[$element], $newRecordKey);
-                    }
-                    $entity->{'set' . $field}($fieldValue);
-                    continue;
-                }
-                if ($useMasterKey) {
-                    $fieldValue = $this->encryptionManager->decryptWithMasterKey($fieldValue);
-                } else {
-                    $fieldValue = $this->encryptionManager->decrypt($fieldValue, $key);
-                }
-                $fieldValue = $this->encryptionManager->encrypt($fieldValue, $newRecordKey);
-                $entity->{'set' . $field}($fieldValue);
+                $value = $this->rotateValue(
+                    $value, $options,
+                    $oldMaster, $newMaster,
+                    $entityKeyPlain, $newEntityKeyPlain,
+                );
+                $entity->{'set' . $field}($value);
             }
-            $encryptedEntity->setKey($this->encryptionManager->encrypt($newRecordKey, $newMasterKey));
-            $this->em->flush();
+            $keyRow->setKey($newMaster->encryptWithMasterKey($newEntityKeyPlain));
+            $keyRow->setMasterEncrypted(true);
+            $this->flushIfBatch(++$count, $batchSize);
         }
-        return $newMasterKey;
+        $this->em->flush();
     }
 
-    private function rotateWithExistingKey(string $dbKey, bool $generateNewKey): ?string
+    private function flushIfBatch(int $count, int $batchSize): void
     {
-        $newMasterKey = $generateNewKey ? $this->encryptionManager->createEncryptionKey() : null;
-        $encryptedEntities = $this->encryptionKeyRepository->findAll();
-
-        foreach ($encryptedEntities as $encryptedEntity) {
-            $entityKey = $this->encryptionManager->decrypt($encryptedEntity->getKey(), $dbKey);
-            $fields = $this->encryptedFieldsRepository->getFields($encryptedEntity->getEntityClass());
-            $entity = $this->em->getRepository($encryptedEntity->getEntityClass())->find($encryptedEntity->getEntityId());
-            $newRecordKey = $this->encryptionManager->createEncryptionKey();
-            foreach ($fields as $field => $options) {
-                if (isset($options['key'])) {
-                    $options['key'] = $this->parameterBag->resolveValue($options['key']);
-                }
-                $key = $options['key'] ?? $entityKey;
-                $useMasterKey = $options['useMasterKey'] ?? false;
-                $elements = $options['elements'] ?? null;
-                $fieldValue = $entity->{'get' . $field}();
-                if ($fieldValue === null) {
-                    continue;
-                }
-                if (is_array($fieldValue) && $elements !== null) {
-                    foreach ($elements as $element) {
-                        $value = $fieldValue[$element] ?? null;
-                        if ($value === null) {
-                            continue;
-                        }
-                        if ($useMasterKey) {
-                            $fieldValue[$element] = $this->encryptionManager->decrypt($value, $dbKey);
-                        } else {
-                            $fieldValue[$element] = $this->encryptionManager->decrypt($value, $key);
-                        }
-                        $fieldValue[$element] = $this->encryptionManager->encrypt($fieldValue[$element], $newRecordKey);
-                    }
-                    $entity->{'set' . $field}($fieldValue);
-                    continue;
-                }
-                if ($useMasterKey) {
-                    $fieldValue = $this->encryptionManager->decrypt($fieldValue, $dbKey);
-                } else {
-                    $fieldValue = $this->encryptionManager->decrypt($fieldValue, $key);
-                }
-                $fieldValue = $this->encryptionManager->encrypt($fieldValue, $newRecordKey);
-                $entity->{'set' . $field}($fieldValue);
-            }
-            if ($newMasterKey) {
-                $encryptedEntity->setKey($this->encryptionManager->encrypt($newRecordKey, $newMasterKey));
-            } else {
-                $encryptedEntity->setKey($this->encryptionManager->encryptWithMasterKey($newRecordKey));
-            }
+        if ($count % $batchSize === 0) {
             $this->em->flush();
+            $this->em->clear();
         }
-        return $newMasterKey;
+    }
+
+    /** @param array<string, mixed> $options */
+    private function rotateValue(
+        mixed $value,
+        array $options,
+        EncryptionManager $oldMaster,
+        EncryptionManager $newMaster,
+        string $oldEntityKey,
+        string $newEntityKey,
+    ): mixed {
+        $elements = $options['elements'] ?? null;
+        if (is_array($value) && $elements !== null) {
+            foreach ($elements as $element) {
+                if (!array_key_exists($element, $value) || $value[$element] === null) {
+                    continue;
+                }
+                $value[$element] = $this->rotateScalar(
+                    (string) $value[$element], $options,
+                    $oldMaster, $newMaster, $oldEntityKey, $newEntityKey,
+                );
+            }
+            return $value;
+        }
+        return $this->rotateScalar(
+            (string) $value, $options,
+            $oldMaster, $newMaster, $oldEntityKey, $newEntityKey,
+        );
+    }
+
+    /** @param array<string, mixed> $options */
+    private function rotateScalar(
+        string $value,
+        array $options,
+        EncryptionManager $oldMaster,
+        EncryptionManager $newMaster,
+        string $oldEntityKey,
+        string $newEntityKey,
+    ): string {
+        if ($options['useMasterKey'] ?? false) {
+            $plain = $oldMaster->decryptWithMasterKey($value);
+            return $newMaster->encryptWithMasterKey($plain);
+        }
+        if (($options['key'] ?? null) !== null) {
+            $customKey = (string) $this->parameterBag->resolveValue($options['key']);
+            // Custom keys are externally owned; we re-encrypt with the same key
+            // to produce a fresh IV but keep the key identity.
+            $plain = $oldMaster->decrypt($value, $customKey);
+            return $newMaster->encrypt($plain, $customKey);
+        }
+        $plain = $oldMaster->decrypt($value, $oldEntityKey);
+        return $newMaster->encrypt($plain, $newEntityKey);
     }
 }

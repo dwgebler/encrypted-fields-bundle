@@ -56,16 +56,8 @@ abstract class FunctionalTestCase extends TestCase
 
             public function log($level, string|\Stringable $message, array $context = []): void
             {
-                // DBAL logging middleware logs query SQL via context['sql'] or in the message
-                $sql = $context['sql'] ?? null;
-                if ($sql === null && isset($context['params'])) {
-                    // statement execute: message contains the SQL template
-                    $sql = (string) $message;
-                }
-                if ($sql !== null) {
-                    $this->log[] = (string) $sql;
-                } else {
-                    $this->log[] = (string) $message;
+                if (isset($context['sql'])) {
+                    $this->log[] = (string) $context['sql'];
                 }
             }
         };
@@ -80,6 +72,8 @@ abstract class FunctionalTestCase extends TestCase
         $config->setProxyDir(sys_get_temp_dir() . '/efb-proxies-' . uniqid());
         $config->setProxyNamespace('EfbProxies');
         $config->setAutoGenerateProxyClasses(true);
+        // Native lazy objects are required on PHP 8.4 because symfony/var-exporter
+        // (the fallback proxy generator) requires PHP 8.4+ in the locked dep tree.
         $config->enableNativeLazyObjects(true);
 
         $xmlDriver = new \Doctrine\ORM\Mapping\Driver\SimplifiedXmlDriver(

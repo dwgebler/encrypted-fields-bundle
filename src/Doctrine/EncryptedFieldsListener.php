@@ -95,18 +95,8 @@ class EncryptedFieldsListener
         if (isset($this->encryptionKeysToLink[$entity])) {
             $encryptionKey = $this->encryptionKeysToLink[$entity];
             $encryptionKey->setEntityId($this->identifierFor($entity) ?? '');
-            // EncryptionKeyListener::prePersist mutates the in-memory key to its
-            // master-encrypted form during flush. Capture the plain hex value
-            // beforehand so we can still decrypt this entity's fields below.
-            $plainKey = $encryptionKey->getKey();
-            $this->em->persist($encryptionKey);
-            $this->em->flush($encryptionKey);
+            $decryptionKey = $this->persistAndCloneWithPlainKey($encryptionKey);
             unset($this->encryptionKeysToLink[$entity]);
-            $decryptionKey = new EncryptionKey();
-            $decryptionKey->setMasterEncrypted(false);
-            $decryptionKey->setEntityClass($encryptionKey->getEntityClass());
-            $decryptionKey->setEntityId($encryptionKey->getEntityId());
-            $decryptionKey->setKey($plainKey);
         } else {
             $decryptionKey = $this->loadEncryptionKey($entity);
         }
@@ -140,9 +130,15 @@ class EncryptedFieldsListener
 
         $encryptionKey = $this->loadEncryptionKey($entity);
         if ($encryptionKey === null) {
-            // Edge case: an entity that exists but has no EncryptionKey row
-            // (e.g. annotated field added after rows were created). Build one.
-            $encryptionKey = $this->ensureEncryptionKeyForInsert($entity);
+            // Edge case: an existing entity has no EncryptionKey row (e.g. an
+            // #[EncryptedField] annotation was added after rows existed).
+            // Build one and flush it now — postPersist won't fire on update.
+            $newKey = new EncryptionKey();
+            $newKey->setEntityClass(ClassUtils::getClass($entity));
+            $newKey->setEntityId($this->identifierFor($entity) ?? '');
+            $newKey->setMasterEncrypted(false);
+            $newKey->setKey($this->encryptionManager->createEncryptionKey());
+            $encryptionKey = $this->persistAndCloneWithPlainKey($newKey);
         }
 
         foreach ($fields as $field => $options) {
@@ -233,6 +229,26 @@ class EncryptedFieldsListener
         $encryptionKey->setKey($this->encryptionManager->createEncryptionKey());
         $this->encryptionKeysToLink[$entity] = $encryptionKey;
         return $encryptionKey;
+    }
+
+    /**
+     * Persist an EncryptionKey and return a transient clone holding the plain
+     * hex key. EncryptionKeyListener::prePersist mutates the persisted object
+     * in place to its master-encrypted form during flush, so callers that need
+     * to encrypt or decrypt with this key after persistence use the clone.
+     */
+    private function persistAndCloneWithPlainKey(EncryptionKey $encryptionKey): EncryptionKey
+    {
+        $plainKey = $encryptionKey->getKey();
+        $this->em->persist($encryptionKey);
+        $this->em->flush($encryptionKey);
+
+        $clone = new EncryptionKey();
+        $clone->setEntityClass($encryptionKey->getEntityClass());
+        $clone->setEntityId($encryptionKey->getEntityId());
+        $clone->setMasterEncrypted(false);
+        $clone->setKey($plainKey);
+        return $clone;
     }
 
     /** @param array<string, array<string, mixed>> $fields */

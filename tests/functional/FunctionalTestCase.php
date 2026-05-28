@@ -37,6 +37,10 @@ abstract class FunctionalTestCase extends TestCase
 
     protected function setUp(): void
     {
+        if (!\Doctrine\DBAL\Types\Type::hasType('uuid')) {
+            \Doctrine\DBAL\Types\Type::addType('uuid', \Symfony\Bridge\Doctrine\Types\UuidType::class);
+        }
+
         $this->masterKey = bin2hex(random_bytes(32));
         $customKey = bin2hex(random_bytes(32));
 

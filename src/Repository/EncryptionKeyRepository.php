@@ -15,4 +15,9 @@ class EncryptionKeyRepository extends ServiceEntityRepository
     {
         parent::__construct($registry, EncryptionKey::class);
     }
+
+    public function findOneByEntity(string $entityClass, string $entityId): ?EncryptionKey
+    {
+        return $this->findOneBy(['entityClass' => $entityClass, 'entityId' => $entityId]);
+    }
 }

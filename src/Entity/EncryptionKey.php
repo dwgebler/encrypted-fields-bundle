@@ -8,7 +8,7 @@ class EncryptionKey
 
     private ?string $entityClass = null;
 
-    private ?int $entityId = null;
+    private ?string $entityId = null;
 
     private ?string $key = null;
 
@@ -43,12 +43,12 @@ class EncryptionKey
         return $this;
     }
 
-    public function getEntityId(): ?int
+    public function getEntityId(): ?string
     {
         return $this->entityId;
     }
 
-    public function setEntityId(int $entityId): static
+    public function setEntityId(string $entityId): static
     {
         $this->entityId = $entityId;
 

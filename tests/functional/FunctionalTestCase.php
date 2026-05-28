@@ -29,6 +29,7 @@ abstract class FunctionalTestCase extends TestCase
     protected EncryptedFieldsRepository $fieldsRepository;
     protected EncryptedFieldsListener $listener;
     protected EncryptionKeyListener $keyListener;
+    protected EncryptionKeyRepository $keyRepo;
     protected ParameterBagInterface $parameterBag;
     protected string $masterKey;
     /** @var list<string> */
@@ -96,13 +97,6 @@ abstract class FunctionalTestCase extends TestCase
 
         $this->em = new EntityManager($connection, $config);
 
-        // Patch EncryptionKey metadata: the orm.xml uses SEQUENCE generator (PostgreSQL-only).
-        // Override to IDENTITY for SQLite compatibility in tests. Task 3 fixes the XML mapping.
-        $keyMeta = $this->em->getClassMetadata(EncryptionKey::class);
-        $keyMeta->setIdGeneratorType(\Doctrine\ORM\Mapping\ClassMetadata::GENERATOR_TYPE_IDENTITY);
-        $keyMeta->setIdGenerator(new \Doctrine\ORM\Id\IdentityGenerator());
-        $keyMeta->sequenceGeneratorDefinition = null;
-
         $schemaTool = new SchemaTool($this->em);
         $metas = $this->em->getMetadataFactory()->getAllMetadata();
         $schemaTool->createSchema($metas);
@@ -123,6 +117,8 @@ abstract class FunctionalTestCase extends TestCase
                 public function getManagerForClass($class): ?\Doctrine\Persistence\ObjectManager { return $this->em; }
             }
         );
+
+        $this->keyRepo = $keyRepo;
 
         $this->listener = new EncryptedFieldsListener(
             $this->fieldsRepository,

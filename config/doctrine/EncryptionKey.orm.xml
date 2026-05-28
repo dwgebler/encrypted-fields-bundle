@@ -5,12 +5,16 @@
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
     <entity name="Gebler\EncryptedFieldsBundle\Entity\EncryptionKey" repository-class="Gebler\EncryptedFieldsBundle\Repository\EncryptionKeyRepository">
-        <id name="id" type="integer" column="id">
-            <generator strategy="SEQUENCE"/>
+        <id name="id" type="bigint" column="id">
+            <generator strategy="IDENTITY"/>
         </id>
-        <field name="entityClass" type="string" length="1000"/>
-        <field name="entityId" type="integer"/>
-        <field name="key" type="string" length="1000"/>
+        <field name="entityClass" type="string" length="255" column="entity_class"/>
+        <field name="entityId" type="string" length="255" column="entity_id"/>
+        <field name="key" type="text" column="encryption_key"/>
+        <field name="masterEncrypted" type="boolean" column="master_encrypted"/>
+        <unique-constraints>
+            <unique-constraint name="uniq_encryption_key_entity" columns="entity_class,entity_id"/>
+        </unique-constraints>
     </entity>
 
 </doctrine-mapping>
